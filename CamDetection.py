@@ -28,7 +28,7 @@ class CameraThread(threading.Thread):
         self.join()
 
 
-def draw_boxes(frame, results, names):
+def draw_bounding_boxes(frame, results, names):
     if not hasattr(results, "boxes") or len(results.boxes) == 0:
         return frame
 
@@ -80,7 +80,7 @@ def main():
             # YOLO tahmini
             results = model(frame, device=device, imgsz=640, conf=0.75)[0]
 
-            frame = draw_boxes(frame, results, names)
+            frame = draw_bounding_boxes(frame, results, names)
 
             # FPS hesapla
             now = time.time()

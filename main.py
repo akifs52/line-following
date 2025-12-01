@@ -7,7 +7,9 @@ import torch
 import cv2
 import time
 from ultralytics import YOLO
-from CamDetection import CameraThread, draw_boxes
+from CamDetection import CameraThread, draw_bounding_boxes
+from frame_saver import FrameSaver
+from socket_client import SocketClient
 
 
 class MainWindow (QMainWindow):
@@ -29,10 +31,19 @@ class MainWindow (QMainWindow):
         self.otonoumBtn: QPushButton = self.ui.findChild(QPushButton, "otonoumBtn")
         self.CamLabel: QLabel = self.ui.findChild(QLabel, "CamLabel")
         self.statusbar: QStatusBar = self.ui.findChild(QStatusBar, "statusbar")
-        self.ipCamLineEdit : QLineEdit = self.ui.findChild(QLineEdit , "ipCamLineEdit")
+        self.ipLineEdit : QLineEdit = self.ui.findChild(QLineEdit , "ipLineEdit")
+        self.closeCam : QPushButton = self.ui.findChild(QPushButton, "closeCam")
+        self.camPortLine : QLineEdit = self.ui.findChild(QLineEdit, "camPortLine")
+        self.raspiPortLine : QLineEdit = self.ui.findChild(QLineEdit , "raspiPortLine")
+
+
+        self.closeCam.hide()
         
          # Kamera Thread
         self.camera_thread = None
+        self.frame_saver = FrameSaver(interval=0.75)
+        self.socket_client = None
+
 
         self.setGeometry(self.ui.geometry())
         
@@ -58,19 +69,36 @@ class MainWindow (QMainWindow):
         self.fps_smooth = None
 
         self.tcpCamBtn.clicked.connect(self.start_camera)
+
+        self.closeCam.clicked.connect(self.closeEvent)
     
     def start_camera(self):
 
-        if self.ipCamLineEdit.text() == "" :
+        if not self.ipLineEdit.text():
+            print("IP boş")
             return
-        else :
-            ip = self.ipCamLineEdit.text()
-            fullip = "http://" + ip + "/video"
+
+        ip = self.ipLineEdit.text()
+        camport = self.camPortLine.text()
+        raspiport = int(self.raspiPortLine.text())
+
+        fullipCam = f"http://{ip}:{camport}/video"
 
         print("[INFO] Starting Camera Thread...")
-        self.camera_thread = CameraThread(fullip)
+
+        # ---- Kamera thread zaten çalışıyorsa durdur ----
+        
+        self.camera_thread = CameraThread(fullipCam)
         self.camera_thread.start()
         self.timer.start(30)
+
+        # ---- Socket ----
+        if not self.socket_client:
+            self.socket_client = SocketClient(ip, raspiport)
+            self.socket_client.connect()
+
+
+        
 
     def update_frame(self):
 
@@ -81,7 +109,9 @@ class MainWindow (QMainWindow):
 
         self.results = self.model(self.frame, device = self.device, imgsz = 640, conf = 0.75)[0]
 
-        self.frame = draw_boxes(self.frame, self.results, self.names)
+        self.frame_saver.try_save(self.frame)
+
+        self.frame = draw_bounding_boxes(self.frame, self.results, self.names)
 
          # ---- FPS ----
         now = time.time()
@@ -106,10 +136,14 @@ class MainWindow (QMainWindow):
                         Qt.SmoothTransformation)
 
         self.CamLabel.setPixmap(scaled_pix)
+
+        
     
     def closeEvent(self, event):
         if self.camera_thread:
             self.camera_thread.stop()
+            self.frame_saver.last_save_time = 0
+            self.socket_client.close()
         event.accept()
 
 
