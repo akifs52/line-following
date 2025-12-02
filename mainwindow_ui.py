@@ -15,6 +15,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
+from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QSizePolicy,
     QSpacerItem, QStackedWidget, QStatusBar, QVBoxLayout,
@@ -69,7 +70,30 @@ class Ui_MainWindow(object):
 "    background: rgba(5, 10, 30, 230);\n"
 "}\n"
 "\n"
+"QLineEdit {\n"
+"    background: rgba(255, 255, 255, 25);\n"
+"    color: #eaf0ff;\n"
 "\n"
+"    border: 1px s"
+                        "olid rgba(255, 255, 255, 60);\n"
+"    border-radius: 10px;\n"
+"\n"
+"    padding: 8px 12px;\n"
+"    selection-background-color: rgba(100, 150, 255, 120);\n"
+"}\n"
+"\n"
+"QLineEdit:hover {\n"
+"    border: 1px solid rgba(120, 180, 255, 140);\n"
+"}\n"
+"\n"
+"QLineEdit:focus {\n"
+"    background: rgba(255, 255, 255, 40);\n"
+"    border: 1px solid rgba(120, 180, 255, 220);\n"
+"}\n"
+"\n"
+"QLineEdit::placeholder {\n"
+"    color: rgba(230, 235, 255, 120);\n"
+"}\n"
 "")
         self.horizontalLayout = QHBoxLayout(self.centralwidget)
         self.horizontalLayout.setSpacing(0)
@@ -148,6 +172,7 @@ class Ui_MainWindow(object):
         self.frame_4.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_4.setFrameShadow(QFrame.Shadow.Raised)
         self.horizontalLayout_3 = QHBoxLayout(self.frame_4)
+        self.horizontalLayout_3.setSpacing(5)
         self.horizontalLayout_3.setObjectName(u"horizontalLayout_3")
         self.horizontalLayout_3.setContentsMargins(0, 0, 0, 0)
         self.frame_7 = QFrame(self.frame_4)
@@ -155,7 +180,7 @@ class Ui_MainWindow(object):
         self.frame_7.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_7.setFrameShadow(QFrame.Shadow.Raised)
         self.verticalLayout_4 = QVBoxLayout(self.frame_7)
-        self.verticalLayout_4.setSpacing(0)
+        self.verticalLayout_4.setSpacing(5)
         self.verticalLayout_4.setObjectName(u"verticalLayout_4")
         self.verticalLayout_4.setContentsMargins(0, 0, 0, 0)
         self.ipLineEdit = QLineEdit(self.frame_7)
@@ -174,11 +199,13 @@ class Ui_MainWindow(object):
 
         self.frame_8 = QFrame(self.frame_4)
         self.frame_8.setObjectName(u"frame_8")
+        self.frame_8.setMaximumSize(QSize(80, 16777215))
         self.frame_8.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_8.setFrameShadow(QFrame.Shadow.Raised)
         self.verticalLayout_3 = QVBoxLayout(self.frame_8)
+        self.verticalLayout_3.setSpacing(5)
         self.verticalLayout_3.setObjectName(u"verticalLayout_3")
-        self.verticalLayout_3.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_3.setContentsMargins(0, 3, 0, 0)
         self.camPortLine = QLineEdit(self.frame_8)
         self.camPortLine.setObjectName(u"camPortLine")
         self.camPortLine.setMaximumSize(QSize(70, 16777215))
@@ -203,11 +230,6 @@ class Ui_MainWindow(object):
 
 
         self.horizontalLayout_3.addWidget(self.frame_8)
-
-        self.closeCam = QPushButton(self.frame_4)
-        self.closeCam.setObjectName(u"closeCam")
-
-        self.horizontalLayout_3.addWidget(self.closeCam)
 
         self.tcpCamBtn = QPushButton(self.frame_4)
         self.tcpCamBtn.setObjectName(u"tcpCamBtn")
@@ -234,6 +256,11 @@ class Ui_MainWindow(object):
 "}")
 
         self.horizontalLayout_3.addWidget(self.tcpCamBtn)
+
+        self.closeCam = QPushButton(self.frame_4)
+        self.closeCam.setObjectName(u"closeCam")
+
+        self.horizontalLayout_3.addWidget(self.closeCam)
 
         self.horizontalSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
@@ -301,6 +328,43 @@ class Ui_MainWindow(object):
         self.frame_2.setMinimumSize(QSize(300, 0))
         self.frame_2.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_2.setFrameShadow(QFrame.Shadow.Raised)
+        self.verticalLayout_5 = QVBoxLayout(self.frame_2)
+        self.verticalLayout_5.setSpacing(0)
+        self.verticalLayout_5.setObjectName(u"verticalLayout_5")
+        self.verticalLayout_5.setContentsMargins(0, 0, 0, 0)
+        self.frame_9 = QFrame(self.frame_2)
+        self.frame_9.setObjectName(u"frame_9")
+        self.frame_9.setFrameShape(QFrame.Shape.StyledPanel)
+        self.frame_9.setFrameShadow(QFrame.Shadow.Raised)
+        self.horizontalLayout_6 = QHBoxLayout(self.frame_9)
+        self.horizontalLayout_6.setSpacing(0)
+        self.horizontalLayout_6.setObjectName(u"horizontalLayout_6")
+        self.horizontalLayout_6.setContentsMargins(0, 0, 0, 0)
+        self.quickWidgetSlider1 = QQuickWidget(self.frame_9)
+        self.quickWidgetSlider1.setObjectName(u"quickWidgetSlider1")
+        self.quickWidgetSlider1.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+
+        self.horizontalLayout_6.addWidget(self.quickWidgetSlider1)
+
+
+        self.verticalLayout_5.addWidget(self.frame_9)
+
+        self.frame_10 = QFrame(self.frame_2)
+        self.frame_10.setObjectName(u"frame_10")
+        self.frame_10.setFrameShape(QFrame.Shape.StyledPanel)
+        self.frame_10.setFrameShadow(QFrame.Shadow.Raised)
+        self.horizontalLayout_7 = QHBoxLayout(self.frame_10)
+        self.horizontalLayout_7.setObjectName(u"horizontalLayout_7")
+
+        self.verticalLayout_5.addWidget(self.frame_10)
+
+        self.frame_11 = QFrame(self.frame_2)
+        self.frame_11.setObjectName(u"frame_11")
+        self.frame_11.setFrameShape(QFrame.Shape.StyledPanel)
+        self.frame_11.setFrameShadow(QFrame.Shadow.Raised)
+
+        self.verticalLayout_5.addWidget(self.frame_11)
+
 
         self.horizontalLayout_2.addWidget(self.frame_2)
 
@@ -335,8 +399,8 @@ class Ui_MainWindow(object):
         self.camPortLine.setText("")
         self.camPortLine.setPlaceholderText(QCoreApplication.translate("MainWindow", u"cam port", None))
         self.raspiPortLine.setPlaceholderText(QCoreApplication.translate("MainWindow", u"raspi port", None))
-        self.closeCam.setText(QCoreApplication.translate("MainWindow", u"Kapat", None))
         self.tcpCamBtn.setText(QCoreApplication.translate("MainWindow", u"TCP/Cam", None))
+        self.closeCam.setText(QCoreApplication.translate("MainWindow", u"Kapat", None))
         self.otonoumBtn.setText(QCoreApplication.translate("MainWindow", u"Otonom S\u00fcr\u00fc\u015f\u00fc Ba\u015flat", None))
     # retranslateUi
 

@@ -55,6 +55,43 @@ def draw_bounding_boxes(frame, results, names):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
     return frame
 
+def strongest_label(frame, results, names):
+    if not hasattr(results, "boxes") or len(results.boxes) == 0:
+        return frame, None
+
+    xyxy = results.boxes.xyxy.cpu().numpy()
+    confs = results.boxes.conf.cpu().numpy()
+    clss = results.boxes.cls.cpu().numpy()
+
+    best_label = None
+    best_conf = 0.0
+
+    h, w = frame.shape[:2]
+    for i in range(len(xyxy)):
+        x1, y1, x2, y2 = map(int, xyxy[i])
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w - 1, x2), min(h - 1, y2)
+
+        conf = float(confs[i])
+        cls_idx = int(clss[i])
+        cls_name = names[cls_idx] if 0 <= cls_idx < len(names) else str(cls_idx)
+
+        # strongest label seçimi
+        if conf > best_conf:
+            best_conf = conf
+            best_label = cls_name
+
+        label = f"{cls_name} {conf:.2f}"
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
+        cv2.rectangle(frame, (x1, y1 - t_size[1] - 6),
+                      (x1 + t_size[0] + 6, y1), (0, 255, 0), -1)
+        cv2.putText(frame, label, (x1 + 3, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+
+    return frame, best_label
+
 
 def main():
     device = "cuda:0" if torch.cuda.is_available() else "cpu"

@@ -1,16 +1,24 @@
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QStatusBar, QLineEdit
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QTimer, Qt
+from PySide6.QtCore import QFile, QTimer, Qt, QUrl
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtQuickWidgets import QQuickWidget
 import sys
 import torch
 import cv2
 import time
 from ultralytics import YOLO
-from CamDetection import CameraThread, draw_bounding_boxes
+from CamDetection import CameraThread, draw_bounding_boxes,strongest_label
 from frame_saver import FrameSaver
 from socket_client import SocketClient
 
+LABEL_TO_CMD = {
+            "left": "L",
+            "right": "R",
+            "straight": "F",
+            "crossleft": "CL",
+            "crossright": "CR",
+        }
 
 class MainWindow (QMainWindow):
     def __init__(self):
@@ -35,7 +43,7 @@ class MainWindow (QMainWindow):
         self.closeCam : QPushButton = self.ui.findChild(QPushButton, "closeCam")
         self.camPortLine : QLineEdit = self.ui.findChild(QLineEdit, "camPortLine")
         self.raspiPortLine : QLineEdit = self.ui.findChild(QLineEdit , "raspiPortLine")
-
+        self.quickWidgetSlider1 : QQuickWidget = self.ui.findChild(QQuickWidget, "quickWidgetSlider1")
 
         self.closeCam.hide()
         
@@ -43,6 +51,15 @@ class MainWindow (QMainWindow):
         self.camera_thread = None
         self.frame_saver = FrameSaver(interval=0.75)
         self.socket_client = None
+        self.last_label = None
+
+
+       
+        self.quickWidgetSlider1.setResizeMode(QQuickWidget.SizeRootObjectToView)
+        self.quickWidgetSlider1.setSource(QUrl.fromLocalFile("tools/circularSlider.qml"))
+
+
+        
 
 
         self.setGeometry(self.ui.geometry())
@@ -71,6 +88,8 @@ class MainWindow (QMainWindow):
         self.tcpCamBtn.clicked.connect(self.start_camera)
 
         self.closeCam.clicked.connect(self.closeEvent)
+
+        #self.otonoumBtn.clicked.connect()
     
     def start_camera(self):
 
@@ -98,8 +117,6 @@ class MainWindow (QMainWindow):
             self.socket_client.connect()
 
 
-        
-
     def update_frame(self):
 
         if not self.camera_thread or self.camera_thread.frame is None:
@@ -109,9 +126,24 @@ class MainWindow (QMainWindow):
 
         self.results = self.model(self.frame, device = self.device, imgsz = 640, conf = 0.75)[0]
 
-        self.frame_saver.try_save(self.frame)
+        #self.frame_saver.try_save(self.frame)
 
         self.frame = draw_bounding_boxes(self.frame, self.results, self.names)
+
+        self.frame , best_label = strongest_label(self.frame,self.results, self.names)
+
+                # ---- TESPİT VARSA ----
+        if best_label:
+            if best_label != self.last_label:
+                self.last_label = best_label
+                command = LABEL_TO_CMD[best_label]
+                self.socket_client.send_command(command)
+
+        # ---- TESPİT YOKSA → STOP ----
+        else:
+            if self.last_label != "stop":
+                self.last_label = "stop"
+                self.socket_client.send_command("S")
 
          # ---- FPS ----
         now = time.time()
@@ -145,7 +177,6 @@ class MainWindow (QMainWindow):
             self.frame_saver.last_save_time = 0
             self.socket_client.close()
         event.accept()
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

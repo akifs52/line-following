@@ -19,13 +19,13 @@ class SocketClient:
             print("[SOCKET] Connection failed:", e)
             self.connected = False
 
-    def send(self, message: str):
+    def send_command(self, cmd):
         if not self.connected:
             return
 
         try:
             with self.lock:
-                self.sock.sendall((message + "\n").encode("utf-8"))
+                self.sock.sendall((cmd + "\n").encode("utf-8"))
         except Exception as e:
             print("[SOCKET] Send error:", e)
             self.connected = False
