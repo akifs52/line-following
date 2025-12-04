@@ -11,23 +11,48 @@ Item {
     property color progressColor: "#4CAF50"
     property int minimumValue: 0
     property int maximumValue: 255
+    property bool hovered: false
+
+    scale:1.05
     
-    
-    
+
     onValueChanged: {
         if (value < minimumValue) value = minimumValue
         if (value > maximumValue) value = maximumValue
         canvas.requestPaint()
     }
     
+    // Hover efekti için koyulaşma layer'ı
+    Rectangle {
+        id: hoverLayer
+        anchors.fill: parent
+        color: hovered ? Qt.rgba(0, 0, 0, 0.2) : "transparent"
+        radius: container.radius
+        Behavior on color {
+            ColorAnimation { duration: 200 }
+        }
+        z: 1
+    }
+    
+    // Ana konteyner
     Rectangle {
         id: container
         anchors.fill: parent
+        
+        // Gradient arka plan
         gradient: Gradient {
-            GradientStop { position: 0.0; color: Qt.rgba(5/255, 10/255, 30/255, 1) }
-            GradientStop { position: 1.0; color: Qt.rgba(40/255, 80/255, 160/255, 1) }
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: "#1d318a" } // RGB(5, 10, 30)
+            GradientStop { position: 1.0; color: "#2850a0" } // RGB(40, 80, 160)
         }
-        radius: 10
+        
+        // Köşe yuvarlatma - beyazlık olmaması için
+        radius: Math.min(width, height) / 15
+        clip: true // İçeriğin köşelerden taşmasını engelle
+        
+        // İnce kenarlık
+        border.width: 1
+        border.color: Qt.rgba(100/255, 120/255, 180/255, 0.6)
         
         Canvas {
             id: canvas
@@ -44,10 +69,10 @@ Item {
                 var startAngle = Math.PI / 2 // 90 derece
                 var angle = (root.value / (maximumValue - minimumValue)) * 2 * Math.PI
                 
-                // Arkaplan dairesi (daha koyu bir renk)
+                // Arkaplan dairesi
                 ctx.beginPath()
                 ctx.lineWidth = 8
-                ctx.strokeStyle = "rgba(30, 30, 50, 0.7)"
+                ctx.strokeStyle = "rgba(30, 40, 60, 0.8)"
                 ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI)
                 ctx.stroke()
                 
@@ -64,36 +89,68 @@ Item {
                 var knobX = centerX + radius * Math.cos(knobAngle)
                 var knobY = centerY + radius * Math.sin(knobAngle)
                 
+                // Knob gölgesi
                 ctx.beginPath()
-                ctx.fillStyle = "white" // Beyaz renk daha iyi görünür
+                ctx.fillStyle = "rgba(0, 0, 0, 0.4)"
+                ctx.arc(knobX + 2, knobY + 2, 8, 0, 2 * Math.PI)
+                ctx.fill()
+                
+                // Knob kendisi
+                ctx.beginPath()
+                ctx.fillStyle = "white"
                 ctx.arc(knobX, knobY, 8, 0, 2 * Math.PI)
                 ctx.fill()
                 
-                // Knob kenarlık
+                // Knob parlaklık efekti
                 ctx.beginPath()
-                ctx.lineWidth = 2
-                ctx.strokeStyle = "rgba(0, 0, 0, 0.5)"
-                ctx.arc(knobX, knobY, 8, 0, 2 * Math.PI)
-                ctx.stroke()
+                ctx.fillStyle = "rgba(255, 255, 255, 0.3)"
+                ctx.arc(knobX - 2, knobY - 2, 4, 0, 2 * Math.PI)
+                ctx.fill()
             }
         }
         
-        Text {
+        // Değer göstergesi
+        Rectangle {
+            id: valueDisplay
+            width: 60
+            height: 40
             anchors.centerIn: parent
-            text: root.value
-            color: "white"
-            font.pointSize: 18
-            font.bold: true
+            color: Qt.rgba(0, 0, 0, 0.3)
+            radius: 8
+            border.width: 1
+            border.color: Qt.rgba(255/255, 255/255, 255/255, 0.2)
             
-           
+            Text {
+                anchors.centerIn: parent
+                text: root.value
+                color: "white"
+                font.pointSize: 16
+                font.bold: true
+                style: Text.Outline
+                styleColor: Qt.rgba(0, 0, 0, 0.5)
+            }
         }
     }
     
+    // Mouse alanı
     MouseArea {
         id: mouseArea
         anchors.fill: parent
-        onPressed: handleMouse(mouse)
-        onPositionChanged: handleMouse(mouse)
+        hoverEnabled: true
+        
+        onEntered: root.hovered = true
+        onExited: root.hovered = false
+        
+        onPressed: {
+            root.hovered = true
+            handleMouse(mouse)
+        }
+        
+        onPositionChanged: {
+            if (pressed) {
+                handleMouse(mouse)
+            }
+        }
         
         function handleMouse(mouse) {
             var centerX = width / 2
@@ -119,4 +176,17 @@ Item {
             }
         }
     }
+    
+    // Hover efekti animasyonu
+    Behavior on scale {
+        NumberAnimation { duration: 200 }
+    }
+    
+    states: [
+        State {
+            name: "hovered"
+            when: hovered
+            PropertyChanges { target: root; scale: 1.08 }
+        }
+    ]
 }

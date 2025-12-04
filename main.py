@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QStatusBar, QLineEdit
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import QFile, QTimer, Qt, QUrl
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QColor
 from PySide6.QtQuickWidgets import QQuickWidget
 import sys
 import torch
@@ -46,7 +46,11 @@ class MainWindow (QMainWindow):
         self.quickWidgetSlider1 : QQuickWidget = self.ui.findChild(QQuickWidget, "quickWidgetSlider1")
 
         self.closeCam.hide()
+
+
+       
         
+
          # Kamera Thread
         self.camera_thread = None
         self.frame_saver = FrameSaver(interval=0.75)
@@ -57,10 +61,15 @@ class MainWindow (QMainWindow):
        
         self.quickWidgetSlider1.setResizeMode(QQuickWidget.SizeRootObjectToView)
         self.quickWidgetSlider1.setSource(QUrl.fromLocalFile("tools/circularSlider.qml"))
-
-
         
 
+         #slider renk ayarları
+
+        self.rootSlider1 = self.quickWidgetSlider1.rootObject()
+        
+        self.rootSlider1.valueChanged.connect(self.on_slider_changed)
+
+    
 
         self.setGeometry(self.ui.geometry())
         
@@ -168,6 +177,17 @@ class MainWindow (QMainWindow):
                         Qt.SmoothTransformation)
 
         self.CamLabel.setPixmap(scaled_pix)
+
+    def on_slider_changed(self):
+        v = self.rootSlider1.property("value")
+
+        if v < 85:
+            self.rootSlider1.setProperty("progressColor", QColor("#ff5252"))
+        elif v < 170:
+            self.rootSlider1.setProperty("progressColor", QColor("#ffca28"))
+        else:
+            self.rootSlider1.setProperty("progressColor", QColor("#66bb6a"))
+
 
         
     
