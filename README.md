@@ -30,3 +30,8 @@ sudo make install
 
 mjpg_streamer -i "input_uvc.so -d /dev/video0 -r 640x480 -f 30" \
               -o "output_http.so -p 8080 -w ./www"
+
+
+
+<img width="1332" height="898" alt="image" src="https://github.com/user-attachments/assets/500e3840-10df-4191-981f-0cb187edd633" />
+
