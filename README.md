@@ -2,8 +2,15 @@
 
 
 ffmpeg -f v4l2 -i /dev/video0 -c:v libx264 -preset ultrafast -b:v 2M -f mpegts tcp://192.168.109.203:2002?listen=1
+
+
+
 ffmpeg -f v4l2 -framerate 30 -video_size 640x480 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 500k -fflags nobuffer -flags low_delay -an -f mpegts tcp://192.168.109.203:2002?listen=1
+
+
 v4l2-ctl --list-devices
+
+
 ffmpeg -f v4l2 -t 5 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 500k -an output.mp4
 
 
