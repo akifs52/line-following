@@ -109,11 +109,15 @@ try:
         last_cmd_time = time.time()
         print("[CMD]", data)
 
-        # SPEED
-        if data.startswith("speed:"):
-            s = int(data.split(":")[1])
-            speed = max(0, min(100, s))
-            apply_speed()
+        # SPEED (PWM format: PWM<value> where value is 0-255)
+        if data.startswith("PWM"):
+            try:
+                pwm_value = int(data[3:])  # Extract number after 'PWM'
+                speed = max(0, min(100, int((pwm_value / 255) * 100)))  # Convert 0-255 to 0-100%
+                apply_speed()
+                print(f"[MOTOR] Speed set to {speed}% (PWM: {pwm_value})")
+            except (ValueError, IndexError):
+                print(f"[ERROR] Invalid PWM value: {data}")
 
         # DIRECTION
         elif data == "straight":

@@ -620,7 +620,30 @@ QPushButton:pressed {
              <property name="frameShadow">
               <enum>QFrame::Shadow::Raised</enum>
              </property>
-             <layout class="QHBoxLayout" name="horizontalLayout_7"/>
+             <layout class="QHBoxLayout" name="horizontalLayout_7">
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QQuickWidget" name="quickWidgetJoystick">
+                <property name="resizeMode">
+                 <enum>QQuickWidget::ResizeMode::SizeRootObjectToView</enum>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </widget>
            </item>
            <item>
