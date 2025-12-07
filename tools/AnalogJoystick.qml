@@ -7,7 +7,7 @@ Item {
     width: 200
     height: 200
 
-    scale: 1.03
+    scale: 1.04
     
     // Hover effect properties
     property bool hovered: false

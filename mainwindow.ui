@@ -580,6 +580,12 @@ QPushButton:pressed {
            </property>
            <item>
             <widget class="QFrame" name="frame_9">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>205</height>
+              </size>
+             </property>
              <property name="frameShape">
               <enum>QFrame::Shape::StyledPanel</enum>
              </property>
@@ -614,6 +620,12 @@ QPushButton:pressed {
            </item>
            <item>
             <widget class="QFrame" name="frame_10">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>220</height>
+              </size>
+             </property>
              <property name="frameShape">
               <enum>QFrame::Shape::StyledPanel</enum>
              </property>

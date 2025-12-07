@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../train/images
+
+
+nc: 5
+names: ['crossleft', 'crossright', 'left', 'right', 'straight']
+
+roboflow:
+  workspace: akifselim52
+  project: line-following-wytk4
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/akifselim52/line-following-wytk4/dataset/2

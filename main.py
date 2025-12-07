@@ -1,11 +1,11 @@
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton, 
-                              QStatusBar, QLineEdit, QVBoxLayout, QWidget)
+                              QStatusBar, QLineEdit, QVBoxLayout, QWidget, 
+                              QMessageBox, QDialog, QVBoxLayout, QHBoxLayout)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QTimer, Qt, QUrl
-from PySide6.QtGui import QImage, QPixmap, QColor
+from PySide6.QtCore import QFile, QTimer, Qt, QUrl, QThread, Signal, QSize
+from PySide6.QtGui import QImage, QPixmap, QColor, QMovie
 from PySide6.QtQuickWidgets import QQuickWidget
 import sys
-from sympy import true
 import torch
 import cv2
 import time
@@ -63,8 +63,8 @@ class MainWindow (QMainWindow):
                     if hasattr(self.joystick_root, 'released'):
                         self.joystick_root.released.connect(self.on_joystick_released)
                     
-                    # Initially disable joystick until manual mode is activated
-                    self.quickWidgetJoystick.setEnabled(true)
+                    # Initially enable joystick
+                    self.quickWidgetJoystick.setEnabled(True)
                 else:
                     print("Warning: Failed to get joystick root object")
                     
@@ -105,7 +105,7 @@ class MainWindow (QMainWindow):
         print ("[INFO] Using:", device)
       
         # Load model with verbose=False to reduce output
-        self.model = YOLO("yolov8n.pt")
+        self.model = YOLO("best.pt")
         self.model.verbose = False  # Disable YOLO's built-in logging
         self.device = device
         self.names = self.model.names
@@ -130,36 +130,137 @@ class MainWindow (QMainWindow):
         self.autonomous_mode = False
         self.otonoumBtn.clicked.connect(self.toggle_autonomous_mode)
     
+    def show_loading_dialog(self, message):
+        """Show a loading dialog with the given message"""
+        self.loading_dialog = QDialog(self)
+        self.loading_dialog.setWindowTitle("Yükleniyor...")
+        self.loading_dialog.setModal(True)
+        self.loading_dialog.setFixedSize(300, 150)
+        
+        layout = QVBoxLayout()
+        
+        # Add loading animation
+        self.movie = QMovie("icons/loading.gif")
+        self.movie.setScaledSize(QSize(50, 50))
+        
+        loading_label = QLabel()
+        loading_label.setMovie(self.movie)
+        loading_label.setAlignment(Qt.AlignCenter)
+        self.movie.start()
+        
+        # Add message
+        msg_label = QLabel(message)
+        msg_label.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(loading_label)
+        layout.addWidget(msg_label)
+        
+        self.loading_dialog.setLayout(layout)
+        self.loading_dialog.show()
+    
+    def close_loading_dialog(self):
+        """Close the loading dialog if it's open"""
+        if hasattr(self, 'loading_dialog') and self.loading_dialog:
+            self.movie.stop()
+            self.loading_dialog.accept()
+            self.loading_dialog = None
+    
+    def check_connections(self):
+        """Check if both camera and socket connections are established"""
+        camera_ready = hasattr(self, 'camera_thread') and self.camera_thread and self.camera_thread.isRunning()
+        socket_ready = hasattr(self, 'socket_client') and self.socket_client and self.socket_client.connected
+        
+        if camera_ready and socket_ready:
+            self.close_loading_dialog()
+            self.timer.start(30)
+        else:
+            # Try again in 100ms if not both connections are ready
+            QTimer.singleShot(100, self.check_connections)
+    
     def start_camera(self):
-
         if not self.ipLineEdit.text():
-            print("IP boş")
+            QMessageBox.warning(self, "Hata", "IP adresi boş olamaz!")
             return
 
-        ip = self.ipLineEdit.text()
-        camport = self.camPortLine.text()
-        raspiport = int(self.raspiPortLine.text())
-
-        fullipCam = f"http://{ip}:{camport}/video"
-
-        print("[INFO] Starting Camera Thread...")
-
-        # ---- Kamera thread zaten çalışıyorsa durdur ----
+        try:
+            ip = self.ipLineEdit.text()
+            camport = self.camPortLine.text()
+            raspiport = int(self.raspiPortLine.text())
+            fullipCam = f"http://{ip}:{camport}/video"
+            
+            # Show loading dialog
+            self.show_loading_dialog("Kamera ve bağlantılar başlatılıyor...")
+            
+            print("[INFO] Starting Camera Thread...")
+            
+            # Start camera thread
+            self.camera_thread = CameraThread(fullipCam)
+            self.camera_ready = False
+            self.camera_thread.start()
+            
+            # Start socket client
+            if not hasattr(self, 'socket_client') or not self.socket_client:
+                self.socket_client = SocketClient(ip, raspiport)
+                self.socket_client.connect()
+            
+            # Start checking connections
+            self.check_connections()
+            
+        except Exception as e:
+            self.close_loading_dialog()
+            QMessageBox.critical(self, "Hata", f"Başlatma hatası: {str(e)}")
+    
+    def check_connections(self):
         
-        self.camera_thread = CameraThread(fullipCam)
-        self.camera_thread.start()
-        self.timer.start(30)
-
-        # ---- Socket ----
-        if not self.socket_client:
-            self.socket_client = SocketClient(ip, raspiport)
-            self.socket_client.connect()
-
+        # Check camera status
+        camera_ready = (hasattr(self, 'camera_thread') and 
+                    self.camera_thread and 
+                    self.camera_thread.is_alive() and
+                    self.camera_thread.frame is not None)
+        
+        # Check socket status
+        socket_ready = (hasattr(self, 'socket_client') and 
+                    self.socket_client and 
+                    self.socket_client.connected)
+        
+        # If both are ready, start the timer and close loading dialog
+        if camera_ready and socket_ready:
+            self.close_loading_dialog()
+            if not self.timer.isActive():
+                self.timer.start(30)
+            return
+        
+        # If camera is not ready but socket is, show camera error
+        if not camera_ready and socket_ready:
+            if not hasattr(self, '_camera_error_shown'):
+                self._camera_error_shown = True
+                QMessageBox.critical(self, "Kamera Hatası", "Kamera başlatılamadı!")
+            if not self.timer.isActive():
+                self.timer.start(30)  # Start timer anyway to show error on screen
+            QTimer.singleShot(100, self.check_connections)
+            return
+        
+        # If socket is not ready but camera is, show socket error
+        if camera_ready and not socket_ready:
+            if not hasattr(self, '_socket_error_shown'):
+                self._socket_error_shown = True
+                QMessageBox.critical(self, "Bağlantı Hatası", "Sunucuya bağlanılamadı!")
+            if not self.timer.isActive():
+                self.timer.start(30)  # Start timer anyway to show camera feed
+            QTimer.singleShot(100, self.check_connections)
+            return
+    
+        # If neither is ready, keep checking
+        QTimer.singleShot(100, self.check_connections)
 
     def update_frame(self):
 
         if not self.camera_thread or self.camera_thread.frame is None:
             return
+
+         # If we got here, camera is working - close loading dialog
+        if hasattr(self, 'loading_dialog') and self.loading_dialog:
+            self.close_loading_dialog()
         
         self.frame = self.camera_thread.frame.copy()
 
@@ -261,17 +362,15 @@ class MainWindow (QMainWindow):
             else:
                 # Calculate angle and speed
                 angle = math.atan2(y, x) * 180 / math.pi  # Convert to degrees
-                speed = min(int(math.sqrt(x*x + y*y) * 100), 100)  # 0-100%
-                
                 # Determine direction based on angle
                 if -45 <= angle < 45:  # Right
-                    self.socket_client.send_command(f"R{speed}")
+                    self.socket_client.send_command(f"R")
                 elif 45 <= angle < 135:  # Forward
-                    self.socket_client.send_command(f"F{speed}")
+                    self.socket_client.send_command(f"F")
                 elif -135 <= angle < -45:  # Backward
-                    self.socket_client.send_command(f"B{speed}")
+                    self.socket_client.send_command(f"B")
                 else:  # Left
-                    self.socket_client.send_command(f"L{speed}")
+                    self.socket_client.send_command(f"L")
     
     def on_joystick_released(self):
         """Handle joystick release - stop the vehicle"""
@@ -279,11 +378,18 @@ class MainWindow (QMainWindow):
             self.socket_client.send_command("S")
     
     def closeEvent(self, event):
-        if self.camera_thread:
+        # Stop camera thread if running
+        if hasattr(self, 'camera_thread') and self.camera_thread:
             self.camera_thread.stop()
-            self.frame_saver.last_save_time = 0
-            if hasattr(self, 'socket_client') and self.socket_client:
-                self.socket_client.close()
+        
+        # Close socket connection if exists
+        if hasattr(self, 'socket_client') and self.socket_client:
+            self.socket_client.close()
+            
+        # Close loading dialog if open
+        if hasattr(self, 'loading_dialog') and self.loading_dialog:
+            self.close_loading_dialog()
+            
         event.accept()
 
 if __name__ == "__main__":
