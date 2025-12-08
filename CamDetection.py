@@ -1,146 +1,177 @@
 import cv2
-import time
-import threading
+import numpy as np
+from PySide6.QtCore import QThread, Signal, QMutex
 from ultralytics import YOLO
 import torch
+import time
 
-class CameraThread(threading.Thread):
-    def __init__(self, cam_url):
+class CameraThread(QThread):
+    frame_ready = Signal(np.ndarray)
+    error_occurred = Signal(str)
+    
+    def __init__(self, camera_url):
         super().__init__()
-        self.cap = cv2.VideoCapture(cam_url)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # bufferı minimum yap
-        if not self.cap.isOpened():
-            raise RuntimeError("Camera could not be opened.")
-        self.frame = None
+        self.camera_url = camera_url
         self.running = True
-
+        self.cap = None
+        self.frame = None
+        self.mutex = QMutex()
+        
     def run(self):
-        while self.running:
-            ret, frame = self.cap.read()
-            if ret:
-                self.frame = frame
-            else:
-                break
-        self.cap.release()
-
-    def stop(self):
-        self.running = False
-        self.join()
-
-
-def draw_bounding_boxes(frame, results, names):
-    if not hasattr(results, "boxes") or len(results.boxes) == 0:
+        try:
+            self.cap = cv2.VideoCapture(self.camera_url)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size
+            if not self.cap.isOpened():
+                raise RuntimeError("Kamera bağlantısı kurulamadı")
+                
+            while self.running:
+                ret, frame = self.cap.read()
+                if ret:
+                    self.mutex.lock()
+                    self.frame = frame.copy()
+                    self.mutex.unlock()
+                    self.frame_ready.emit(frame)
+                else:
+                    raise RuntimeError("Kameradan görüntü alınamadı")
+                self.msleep(10)  # ~100 FPS max
+                
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+        finally:
+            self.release()
+            
+    def get_frame(self):
+        self.mutex.lock()
+        frame = self.frame.copy() if self.frame is not None else None
+        self.mutex.unlock()
         return frame
+            
+    def release(self):
+        self.running = False
+        if hasattr(self, 'cap') and self.cap is not None:
+            self.cap.release()
+            self.cap = None
 
-    xyxy = results.boxes.xyxy.cpu().numpy()
-    confs = results.boxes.conf.cpu().numpy()
-    clss = results.boxes.cls.cpu().numpy()
+class ObjectDetector:
+    def __init__(self, model_path="yolov8n.pt", device=None):
+        if device is None:
+            self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+            
+        self.model = YOLO(model_path)
+        self.model.verbose = False
+        self.names = self.model.names
+        
+    def detect(self, frame, conf=0.5, iou=0.45):
+        """Run YOLO model inference on the input frame"""
+        results = self.model(frame, conf=conf, iou=iou, device=self.device, verbose=False)
+        return results[0] if results else None
 
-    h, w = frame.shape[:2]
-    for i in range(len(xyxy)):
-        x1, y1, x2, y2 = map(int, xyxy[i])
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w - 1, x2), min(h - 1, y2)
-
-        conf = float(confs[i])
-        cls_idx = int(clss[i])
-        cls_name = names[cls_idx] if 0 <= cls_idx < len(names) else str(cls_idx)
-        label = f"{cls_name} {conf:.2f}"
-
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
-        cv2.rectangle(frame, (x1, y1 - t_size[1] - 6),
-                      (x1 + t_size[0] + 6, y1), (0, 255, 0), -1)
-        cv2.putText(frame, label, (x1 + 3, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+def draw_bounding_boxes(frame, results, names, conf_threshold=0.5):
+    """Draw bounding boxes and labels on the frame"""
+    if results is None or not hasattr(results, 'boxes'):
+        return frame
+    
+    # Process detections
+    for box in results.boxes:
+        conf = box.conf.item()
+        if conf < conf_threshold:
+            continue
+            
+        # Get box coordinates
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+        cls_id = int(box.cls.item())
+        label = names.get(cls_id, f"Class {cls_id}")
+        
+        # Draw rectangle and label
+        color = (0, 255, 0)  # Green
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        
+        # Create label with confidence
+        label = f"{label} {conf:.2f}"
+        (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+        cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
+        cv2.putText(frame, label, (x1, y1 - 5), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+    
     return frame
 
-def strongest_label(frame, results, names):
-    if not hasattr(results, "boxes") or len(results.boxes) == 0:
-        return frame, None
-
-    xyxy = results.boxes.xyxy.cpu().numpy()
-    confs = results.boxes.conf.cpu().numpy()
-    clss = results.boxes.cls.cpu().numpy()
-
-    best_label = None
-    best_conf = 0.0
-
-    h, w = frame.shape[:2]
-    for i in range(len(xyxy)):
-        x1, y1, x2, y2 = map(int, xyxy[i])
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w - 1, x2), min(h - 1, y2)
-
-        conf = float(confs[i])
-        cls_idx = int(clss[i])
-        cls_name = names[cls_idx] if 0 <= cls_idx < len(names) else str(cls_idx)
-
-        # strongest label seçimi
-        if conf > best_conf:
-            best_conf = conf
-            best_label = cls_name
-
-        label = f"{cls_name} {conf:.2f}"
-
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
-        cv2.rectangle(frame, (x1, y1 - t_size[1] - 6),
-                      (x1 + t_size[0] + 6, y1), (0, 255, 0), -1)
-        cv2.putText(frame, label, (x1 + 3, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
-
-    return frame, best_label
-
-
-def main():
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    print(f"[INFO] Using device: {device}")
-
-    model = YOLO("yolov8n.pt")  # Model otomatik indirir
-    names = model.names if hasattr(model, "names") else []
+def process_frame(frame, detector, frame_counter=0, show_fps=True):
+    """Process a single frame with object detection"""
+    if frame is None:
+        return None, 0, 0, 0, None
     
+    # Run object detection
+    results = detector.detect(frame)
+    
+    # Draw bounding boxes
+    if results is not None:
+        frame = draw_bounding_boxes(frame, results, detector.names)
+    
+    # Calculate and display FPS
+    fps = 0
+    if show_fps and hasattr(process_frame, 'prev_time'):
+        current_time = time.time()
+        fps = 1 / (current_time - process_frame.prev_time)
+        process_frame.prev_time = current_time
+        #cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), 
+         #          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    elif show_fps:
+        process_frame.prev_time = time.time()
+    
+    return frame, fps, 0, 0, results
 
-    cam_thread = CameraThread("http://192.168.109.70:8080?action=stream")
-    cam_thread.start()
-    print("[INFO] Camera thread started.")
-
-    prev_time = time.time()
-    fps_smooth = None
-
-    try:
-        while True:
-            frame = cam_thread.frame
-            if frame is None:
-                continue
-
-            # YOLO tahmini
-            results = model(frame, device=device, imgsz=640, conf=0.75)[0]
-
-            frame = draw_bounding_boxes(frame, results, names)
-
-            # FPS hesapla
-            now = time.time()
-            fps = 1.0 / (now - prev_time) if now != prev_time else 0.0
-            prev_time = now
-            fps_smooth = fps if fps_smooth is None else (
-                0.9 * fps_smooth + 0.1 * fps)
-
-            cv2.putText(frame, f"FPS: {fps_smooth:.1f}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-            cv2.imshow("YOLOv8 Threaded Camera", frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-
-    except KeyboardInterrupt:
-        pass
-    finally:
-        cam_thread.stop()
-        cv2.destroyAllWindows()
-        print("[INFO] Camera stopped and windows closed.")
-
-
+# For testing
 if __name__ == "__main__":
-    main()
+    import sys
+    from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPixmap
+
+    class CameraApp(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("Camera Feed")
+            self.setGeometry(100, 100, 800, 600)
+            
+            self.label = QLabel(self)
+            self.label.setAlignment(Qt.AlignCenter)
+            
+            layout = QVBoxLayout()
+            layout.addWidget(self.label)
+            self.setLayout(layout)
+            
+            self.camera_thread = CameraThread(0)  # 0 for default camera
+            self.camera_thread.frame_ready.connect(self.update_frame)
+            self.camera_thread.error_occurred.connect(self.handle_error)
+            self.camera_thread.start()
+            
+            self.detector = ObjectDetector()
+            
+        def update_frame(self, frame):
+            # Process frame with object detection
+            processed_frame, _, _, _, _ = process_frame(frame, self.detector)
+            
+            # Convert to QImage
+            h, w, ch = processed_frame.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(processed_frame.data, w, h, bytes_per_line, QImage.Format_BGR888)
+            
+            # Display image
+            self.label.setPixmap(QPixmap.fromImage(qt_image).scaled(
+                self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            
+        def handle_error(self, error_msg):
+            print(f"Error: {error_msg}")
+            self.close()
+            
+        def closeEvent(self, event):
+            self.camera_thread.release()
+            self.camera_thread.wait()
+            event.accept()
+
+    app = QApplication(sys.argv)
+    window = CameraApp()
+    window.show()
+    sys.exit(app.exec())

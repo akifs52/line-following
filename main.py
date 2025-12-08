@@ -11,7 +11,7 @@ import cv2
 import time
 import math
 from ultralytics import YOLO
-from CamDetection import CameraThread, draw_bounding_boxes,strongest_label
+from CamDetection import CameraThread, ObjectDetector, process_frame
 from frame_saver import FrameSaver
 from socket_client import SocketClient
 
@@ -56,12 +56,12 @@ class MainWindow (QMainWindow):
                 self.quickWidgetJoystick.setSource(QUrl.fromLocalFile("tools/AnalogJoystick.qml"))
                 self.joystick_root = self.quickWidgetJoystick.rootObject()
                 
-                if self.joystick_root:
-                    # Connect joystick signals
-                    if hasattr(self.joystick_root, 'positionChanged'):
-                        self.joystick_root.positionChanged.connect(self.on_joystick_moved)
-                    if hasattr(self.joystick_root, 'released'):
-                        self.joystick_root.released.connect(self.on_joystick_released)
+                
+                # Connect joystick signals
+                if hasattr(self.joystick_root, 'positionChanged'):
+                    self.joystick_root.positionChanged.connect(self.on_joystick_moved)
+                if hasattr(self.joystick_root, 'released'):
+                    self.joystick_root.released.connect(self.on_joystick_released)
                     
                     # Initially enable joystick
                     self.quickWidgetJoystick.setEnabled(True)
@@ -105,17 +105,15 @@ class MainWindow (QMainWindow):
         print ("[INFO] Using:", device)
       
         # Load model with verbose=False to reduce output
-        self.model = YOLO("best.pt")
-        self.model.verbose = False  # Disable YOLO's built-in logging
+        self.detector = ObjectDetector(model_path="yolo11n.pt", device=device)
         self.device = device
-        self.names = self.model.names
         self.verbose = False  # Flag to control our own debug output
 
         self.statusbar.showMessage(device)
 
          #timer update frame
         self.timer = QTimer()
-        self.timer.timeout.connect(self.update_frame)
+       
 
          #FPS için
 
@@ -215,10 +213,8 @@ class MainWindow (QMainWindow):
         # Check camera status
         camera_ready = (hasattr(self, 'camera_thread') and 
                     self.camera_thread and 
-                    self.camera_thread.is_alive() and
-                    self.camera_thread.frame is not None)
+                    self.camera_thread.isRunning())
         
-        # Check socket status
         socket_ready = (hasattr(self, 'socket_client') and 
                     self.socket_client and 
                     self.socket_client.connected)
@@ -249,74 +245,130 @@ class MainWindow (QMainWindow):
                 self.timer.start(30)  # Start timer anyway to show camera feed
             QTimer.singleShot(100, self.check_connections)
             return
-    
+        
         # If neither is ready, keep checking
         QTimer.singleShot(100, self.check_connections)
 
-    def update_frame(self):
-
-        if not self.camera_thread or self.camera_thread.frame is None:
+    def start_camera(self):
+        if not self.ipLineEdit.text():
+            QMessageBox.warning(self, "Hata", "IP adresi boş olamaz!")
             return
 
-         # If we got here, camera is working - close loading dialog
-        if hasattr(self, 'loading_dialog') and self.loading_dialog:
+        try:
+            ip = self.ipLineEdit.text()
+            camport = self.camPortLine.text()
+            raspiport = int(self.raspiPortLine.text())
+            fullipCam = f"http://{ip}:{camport}/video"
+            
+            # Show loading dialog
+            self.show_loading_dialog("Kamera ve bağlantılar başlatılıyor...")
+            
+            print("[INFO] Starting Camera Thread...")
+            
+            # Stop previous camera thread if exists
+            if hasattr(self, 'camera_thread') and self.camera_thread:
+                self.camera_thread.release()
+                self.camera_thread.wait()
+            
+            # Start new camera thread
+            self.camera_thread = CameraThread(fullipCam)
+            self.camera_thread.frame_ready.connect(self.on_frame_received)
+            self.camera_thread.error_occurred.connect(self.handle_camera_error)
+            self.camera_thread.start()
+            
+            # Start socket client
+            if not hasattr(self, 'socket_client') or not self.socket_client:
+                self.socket_client = SocketClient(ip, raspiport)
+                self.socket_client.connect()
+            
+            # Start checking connections
+            QTimer.singleShot(1000, self.check_connections)
+            
+        except Exception as e:
             self.close_loading_dialog()
-        
-        self.frame = self.camera_thread.frame.copy()
+            QMessageBox.critical(self, "Hata", f"Başlatma hatası: {str(e)}")
+    
+    def on_frame_received(self, frame):
+        """Handle frame received from camera thread"""
+        try:
+            # Process frame with object detection
+            processed_frame, fps, _, _, results = process_frame(
+                frame, 
+                self.detector,
+                frame_counter=0,
+                show_fps=True
+            )
 
-        # Run YOLO detection with verbose=False to suppress output
-        self.results = self.model(self.frame, device=self.device, imgsz=640, conf=0.75, verbose=False)[0]
-        
-        # Only show detection info when in verbose mode
-        if self.verbose and len(self.results.boxes) > 0:
-            print(f"Detected {len(self.results.boxes)} objects")
+            # Convert frame to QImage
+            h, w, ch = processed_frame.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(processed_frame.data, w, h, bytes_per_line, QImage.Format_BGR888)
+            
+            # Display image
+            self.CamLabel.setPixmap(QPixmap.fromImage(qt_image).scaled(
+                self.CamLabel.size(), 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            ))
 
-        #self.frame_saver.try_save(self.frame)
+            # Handle detection results
+            if results is not None and hasattr(results, 'boxes') and len(results.boxes) > 0:
+                # Find the detection with highest confidence
+                best_conf = 0
+                best_label = None
+                
+                for box in results.boxes:
+                    conf = box.conf.item()
+                    if conf > best_conf:
+                        best_conf = conf
+                        best_label = self.detector.names.get(int(box.cls.item()), "unknown")
 
-        self.frame = draw_bounding_boxes(self.frame, self.results, self.names)
+                # Process the best detection
+                if best_label and best_label != self.last_label:
+                    self.last_label = best_label
+                    if self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
+                        command = LABEL_TO_CMD.get(best_label, "S")  # Default to stop if label not in mapping
+                        self.socket_client.send_command(command)
+            else:
+                # No detections - send stop if we were tracking a label
+                if self.last_label != "stop":
+                    self.last_label = "stop"
+                    if self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
+                        self.socket_client.send_command("S")
 
-        self.frame , best_label = strongest_label(self.frame,self.results, self.names)
-
-                # ---- TESPİT VARSA ----
-        if best_label:
-            if best_label != self.last_label:
-                self.last_label = best_label
-                if self.autonomous_mode:  # Only send command if in autonomous mode
-                    command = LABEL_TO_CMD[best_label]
-                    self.socket_client.send_command(command)
-
-        # ---- TESPİT YOKSA → STOP ----
-        else:
-            if self.last_label != "stop":
-                self.last_label = "stop"
-                if self.autonomous_mode:  # Only send stop command if in autonomous mode
-                    self.socket_client.send_command("S")
-
-         # ---- FPS ----
-        now = time.time()
-        fps = 1.0 / (now - self.prev_time)
-        self.prev_time = now
-        self.fps_smooth = fps if self.fps_smooth is None else (0.9 * self.fps_smooth + 0.1 * fps)
-        
-        self.statusbar.showMessage(f"FPS: {self.fps_smooth:.2f}")
-
-         # ---- BGR → RGB ----
-        
-        rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
-        h,w,ch = rgb.shape
-        img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
-
-        #Image Size eşitlenir
-
-        pix = QPixmap.fromImage(img)
-        scaled_pix = pix.scaled(self.CamLabel.width(), 
-                        self.CamLabel.height(),
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation)
-
-        self.CamLabel.setPixmap(scaled_pix)
+            # Update status bar with FPS
+            if fps > 0:
+                self.statusbar.showMessage(f"FPS: {fps:.1f} | Mode: {'AUTO' if self.autonomous_mode else 'MANUAL'}")
+                
+        except Exception as e:
+            print(f"Error in on_frame_received: {str(e)}")
+            # Optionally show error in status bar
+            self.statusbar.showMessage(f"Error: {str(e)}")
+    
+    
+    
+    def handle_camera_error(self, error_msg):
+        """Handle camera thread errors"""
+        self.close_loading_dialog()
+        QMessageBox.critical(self, "Kamera Hatası", error_msg)
+        self.close_camera()
+    
+    
+    
+    def close_camera(self):
+        """Close camera thread and related resources"""
+        if hasattr(self, 'camera_thread') and self.camera_thread:
+            self.camera_thread.release()
+            self.camera_thread.wait()
+            self.camera_thread = None
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
+        self.close_loading_dialog()
+    
 
     def on_slider_changed(self):
+
+        
         v = int(self.rootSlider1.property("value"))
 
         # Update slider color based on value
@@ -378,9 +430,8 @@ class MainWindow (QMainWindow):
             self.socket_client.send_command("S")
     
     def closeEvent(self, event):
-        # Stop camera thread if running
-        if hasattr(self, 'camera_thread') and self.camera_thread:
-            self.camera_thread.stop()
+        # Close camera thread if running
+        self.close_camera()
         
         # Close socket connection if exists
         if hasattr(self, 'socket_client') and self.socket_client:

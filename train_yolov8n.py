@@ -41,10 +41,10 @@ if __name__ == '__main__':
     if not os.path.exists(DATA_YAML):
         raise FileNotFoundError(f"data.yaml bulunamadı: {DATA_YAML}")
     
-    print("✅ data.yaml bulundu")
-    print("🚀 Eğitim başlıyor...")
+    print(" data.yaml bulundu")
+    print(" Eğitim başlıyor...")
     
     train_model()
     
-    print("\n✅ Eğitim tamamlandı!")
-    print(f"📁 Model yolu: {PROJECT}/detect/{EXP_NAME}/weights/best.pt")
+    print("\n Eğitim tamamlandı!")
+    print(f" Model yolu: {PROJECT}/detect/{EXP_NAME}/weights/best.pt")
