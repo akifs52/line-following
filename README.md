@@ -1,5 +1,7 @@
 # Line Following Robot Project
 
+![WhatsApp Image 2026-01-08 at 5 01 44 PM](https://github.com/user-attachments/assets/31ad27b1-5c40-47b0-9a89-25c3d8879a1e)
+
 ## Overview
 This project implements a line-following robot using computer vision techniques. It utilizes YOLO (You Only Look Once) for object detection and tracking.
 
