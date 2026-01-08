@@ -5,7 +5,7 @@ from datetime import datetime
 
 
 class FrameSaver:
-    def __init__(self, save_dir = "frames", interval = 0.75):
+    def __init__(self, save_dir = "frames", interval = 0.30):
         self.save_dir  = save_dir
         self.interval = interval #saniye
         self.last_save_time = 0.0

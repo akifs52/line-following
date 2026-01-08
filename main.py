@@ -77,7 +77,7 @@ class MainWindow (QMainWindow):
 
         # Kamera Thread
         self.camera_thread = None
-        self.frame_saver = FrameSaver(interval=0.75)
+        self.frame_saver = FrameSaver(interval=0.30)
         self.socket_client = None
         self.last_label = None
 
@@ -105,7 +105,7 @@ class MainWindow (QMainWindow):
         print ("[INFO] Using:", device)
       
         # Load model with verbose=False to reduce output
-        self.detector = ObjectDetector(model_path="yolo11n.pt", device=device)
+        self.detector = ObjectDetector(model_path="best.pt", device=device)
         self.device = device
         self.verbose = False  # Flag to control our own debug output
 
@@ -164,51 +164,6 @@ class MainWindow (QMainWindow):
             self.loading_dialog = None
     
     def check_connections(self):
-        """Check if both camera and socket connections are established"""
-        camera_ready = hasattr(self, 'camera_thread') and self.camera_thread and self.camera_thread.isRunning()
-        socket_ready = hasattr(self, 'socket_client') and self.socket_client and self.socket_client.connected
-        
-        if camera_ready and socket_ready:
-            self.close_loading_dialog()
-            self.timer.start(30)
-        else:
-            # Try again in 100ms if not both connections are ready
-            QTimer.singleShot(100, self.check_connections)
-    
-    def start_camera(self):
-        if not self.ipLineEdit.text():
-            QMessageBox.warning(self, "Hata", "IP adresi boş olamaz!")
-            return
-
-        try:
-            ip = self.ipLineEdit.text()
-            camport = self.camPortLine.text()
-            raspiport = int(self.raspiPortLine.text())
-            fullipCam = f"http://{ip}:{camport}/video"
-            
-            # Show loading dialog
-            self.show_loading_dialog("Kamera ve bağlantılar başlatılıyor...")
-            
-            print("[INFO] Starting Camera Thread...")
-            
-            # Start camera thread
-            self.camera_thread = CameraThread(fullipCam)
-            self.camera_ready = False
-            self.camera_thread.start()
-            
-            # Start socket client
-            if not hasattr(self, 'socket_client') or not self.socket_client:
-                self.socket_client = SocketClient(ip, raspiport)
-                self.socket_client.connect()
-            
-            # Start checking connections
-            self.check_connections()
-            
-        except Exception as e:
-            self.close_loading_dialog()
-            QMessageBox.critical(self, "Hata", f"Başlatma hatası: {str(e)}")
-    
-    def check_connections(self):
         
         # Check camera status
         camera_ready = (hasattr(self, 'camera_thread') and 
@@ -258,7 +213,7 @@ class MainWindow (QMainWindow):
             ip = self.ipLineEdit.text()
             camport = self.camPortLine.text()
             raspiport = int(self.raspiPortLine.text())
-            fullipCam = f"http://{ip}:{camport}/video"
+            fullipCam = f"http://10.60.217.117:2002/video"
             
             # Show loading dialog
             self.show_loading_dialog("Kamera ve bağlantılar başlatılıyor...")
@@ -291,6 +246,10 @@ class MainWindow (QMainWindow):
     def on_frame_received(self, frame):
         """Handle frame received from camera thread"""
         try:
+            
+            # Save frame using frame_saver
+            self.frame_saver.try_save(frame)
+
             # Process frame with object detection
             processed_frame, fps, _, _, results = process_frame(
                 frame, 
@@ -303,6 +262,9 @@ class MainWindow (QMainWindow):
             h, w, ch = processed_frame.shape
             bytes_per_line = ch * w
             qt_image = QImage(processed_frame.data, w, h, bytes_per_line, QImage.Format_BGR888)
+            
+           
+            
             
             # Display image
             self.CamLabel.setPixmap(QPixmap.fromImage(qt_image).scaled(

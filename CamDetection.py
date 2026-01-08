@@ -116,7 +116,7 @@ def process_frame(frame, detector, frame_counter=0, show_fps=True):
         fps = 1 / (current_time - process_frame.prev_time)
         process_frame.prev_time = current_time
         #cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), 
-         #          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        #          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
     elif show_fps:
         process_frame.prev_time = time.time()
     
