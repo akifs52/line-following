@@ -94,7 +94,6 @@ class MainWindow (QMainWindow):
         self.rootSlider1.valueChanged.connect(self.on_slider_changed)
 
     
-
         self.setGeometry(self.ui.geometry())
         
         self.setWindowTitle("Otonoum Car UI")
@@ -130,36 +129,38 @@ class MainWindow (QMainWindow):
     
     def show_loading_dialog(self, message):
         """Show a loading dialog with the given message"""
-        self.loading_dialog = QDialog(self)
-        self.loading_dialog.setWindowTitle("Yükleniyor...")
-        self.loading_dialog.setModal(True)
-        self.loading_dialog.setFixedSize(300, 150)
+        from PySide6 import QtWidgets, QtCore
+        from PySide6.QtQuickWidgets import QQuickWidget
+        from loading_dialog_ui import Ui_LoadingDialog
         
-        layout = QVBoxLayout()
+        self.loading_dialog = QtWidgets.QDialog(self)
+        self.loading_ui = Ui_LoadingDialog()
+        self.loading_ui.setupUi(self.loading_dialog)
         
-        # Add loading animation
-        self.movie = QMovie("icons/loading.gif")
-        self.movie.setScaledSize(QSize(50, 50))
+        # Set custom message if provided
+        if message:
+            self.loading_ui.message_label.setText(message)
         
-        loading_label = QLabel()
-        loading_label.setMovie(self.movie)
-        loading_label.setAlignment(Qt.AlignCenter)
-        self.movie.start()
+        # Add QML loading animation
+        self.loading_widget = QQuickWidget(self.loading_dialog)
+        self.loading_widget.setResizeMode(QQuickWidget.SizeRootObjectToView)
+        self.loading_widget.setSource(QtCore.QUrl.fromLocalFile("tools/LoadingCircle.qml"))
+        self.loading_widget.setFixedSize(48, 48)
         
-        # Add message
-        msg_label = QLabel(message)
-        msg_label.setAlignment(Qt.AlignCenter)
+        # Replace the loading label with the QML widget
+        self.loading_ui.loading_label.setParent(None)
+        self.loading_ui.loading_label.deleteLater()
         
-        layout.addWidget(loading_label)
-        layout.addWidget(msg_label)
+        # Add QML widget to the layout
+        layout = self.loading_ui.contentLayout
+        layout.insertWidget(0, self.loading_widget)
+        layout.setAlignment(self.loading_widget, QtCore.Qt.AlignCenter)
         
-        self.loading_dialog.setLayout(layout)
         self.loading_dialog.show()
     
     def close_loading_dialog(self):
         """Close the loading dialog if it's open"""
         if hasattr(self, 'loading_dialog') and self.loading_dialog:
-            self.movie.stop()
             self.loading_dialog.accept()
             self.loading_dialog = None
     

@@ -4,8 +4,8 @@ import QtQuick.Window 2.15
 
 Item {
     id: root
-    width: 200
-    height: 200
+    width: 190
+    height: 190
 
     scale: 1.04
     
