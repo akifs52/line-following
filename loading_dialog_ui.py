@@ -16,9 +16,9 @@ class Ui_LoadingDialog(object):
         LoadingDialog.setMaximumSize(QtCore.QSize(450, 300))
         LoadingDialog.setModal(True)
         LoadingDialog.setStyleSheet("QDialog {\n"
-"    background-color: #FFFFFF;\n"
+"    background-color: #111827;\n"
 "    border-radius: 8px;\n"
-"    border: 1px solid #E5E5E5;\n"
+"    border: 1px solid #374151;\n"
 "}")
 
         self.verticalLayout = QtWidgets.QVBoxLayout(LoadingDialog)
@@ -44,7 +44,7 @@ class Ui_LoadingDialog(object):
         self.textLayout.setSpacing(8)
 
         self.message_label = QtWidgets.QLabel(self.textWidget)
-        self.message_label.setStyleSheet("color: #333333;\n"
+        self.message_label.setStyleSheet("color: #F9FAFB;\n"
 "font-size: 15px;\n"
 "font-weight: normal;")
         self.message_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -53,7 +53,7 @@ class Ui_LoadingDialog(object):
         self.textLayout.addWidget(self.message_label)
 
         self.info_label = QtWidgets.QLabel(self.textWidget)
-        self.info_label.setStyleSheet("color: #666666;\n"
+        self.info_label.setStyleSheet("color: #9CA3AF;\n"
 "font-size: 12px;")
         self.info_label.setAlignment(QtCore.Qt.AlignCenter)
         self.info_label.setWordWrap(True)
@@ -68,8 +68,8 @@ class Ui_LoadingDialog(object):
         self.statusWidget.setMinimumSize(QtCore.QSize(0, 36))
         self.statusWidget.setMaximumSize(QtCore.QSize(16777215, 36))
         self.statusWidget.setStyleSheet("QWidget#statusWidget {\n"
-"    background-color: #FAFAFA;\n"
-"    border-top: 1px solid #F0F0F0;\n"
+"    background-color: #1F2937;\n"
+"    border-top: 1px solid #374151;\n"
 "}")
         self.statusWidget.setObjectName("statusWidget")
         self.statusLayout = QtWidgets.QHBoxLayout(self.statusWidget)
@@ -79,14 +79,14 @@ class Ui_LoadingDialog(object):
         self.status_indicator = QtWidgets.QLabel(self.statusWidget)
         self.status_indicator.setMinimumSize(QtCore.QSize(8, 8))
         self.status_indicator.setMaximumSize(QtCore.QSize(8, 8))
-        self.status_indicator.setStyleSheet("background-color: #FFA500; \n"
+        self.status_indicator.setStyleSheet("background-color: #3B82F6; \n"
 "border-radius: 4px;")
         self.status_indicator.setText("")
         self.status_indicator.setObjectName("status_indicator")
         self.statusLayout.addWidget(self.status_indicator)
 
         self.status_label = QtWidgets.QLabel(self.statusWidget)
-        self.status_label.setStyleSheet("color: #999999; \n"
+        self.status_label.setStyleSheet("color: #9CA3AF; \n"
 "font-size: 11px; \n"
 "font-weight: 600;\n"
 "text-transform: uppercase;\n"

@@ -147,6 +147,12 @@ class MainWindow (QMainWindow):
         self.loading_widget.setSource(QtCore.QUrl.fromLocalFile("tools/LoadingCircle.qml"))
         self.loading_widget.setFixedSize(48, 48)
         
+        # Make QQuickWidget background transparent
+        from PySide6.QtGui import QColor
+        self.loading_widget.setClearColor(QColor("#111827"))
+        self.loading_widget.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        self.loading_widget.setStyleSheet("background: transparent;")
+        
         # Replace the loading label with the QML widget
         self.loading_ui.loading_label.setParent(None)
         self.loading_ui.loading_label.deleteLater()
