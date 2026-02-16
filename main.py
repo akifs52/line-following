@@ -10,6 +10,7 @@ import torch
 import cv2
 import time
 import math
+import subprocess
 from ultralytics import YOLO
 from CamDetection import CameraThread, ObjectDetector, process_frame
 from frame_saver import FrameSaver
@@ -28,7 +29,7 @@ class MainWindow (QMainWindow):
         super().__init__()
 
         loader = QUiLoader()
-        ui_file = QFile("mainwindow.ui")
+        ui_file = QFile("modern_mainwindow.ui")
         ui_file.open(QFile.ReadOnly)
         self.ui = loader.load(ui_file)
         ui_file.close()
@@ -41,21 +42,25 @@ class MainWindow (QMainWindow):
         self.tcpCamBtn: QPushButton = self.ui.findChild(QPushButton, "tcpCamBtn")
         self.otonoumBtn: QPushButton = self.ui.findChild(QPushButton, "otonoumBtn")
         self.CamLabel: QLabel = self.ui.findChild(QLabel, "CamLabel")
-        self.statusbar: QStatusBar = self.ui.findChild(QStatusBar, "statusbar")
         self.ipLineEdit : QLineEdit = self.ui.findChild(QLineEdit , "ipLineEdit")
         self.closeCam : QPushButton = self.ui.findChild(QPushButton, "closeCam")
         self.camPortLine : QLineEdit = self.ui.findChild(QLineEdit, "camPortLine")
-        self.raspiPortLine : QLineEdit = self.ui.findChild(QLineEdit , "raspiPortLine")
+        self.raspiPortLine : QLineEdit = self.ui.findChild(QLineEdit, "raspiPortLine")
         self.quickWidgetSlider1 = self.ui.findChild(QQuickWidget, "quickWidgetSlider1")
         self.quickWidgetJoystick = self.ui.findChild(QQuickWidget, "quickWidgetJoystick")
+        
+        
+        # Footer frame içindeki label'lar
+        self.cudaLabel: QLabel = self.ui.findChild(QLabel, "cudaLabel")
+        self.vramLabel: QLabel = self.ui.findChild(QLabel, "vramLabel")
+        self.fpsLabel: QLabel = self.ui.findChild(QLabel, "fpsLabel")
         self.joystick_root = None
         
         if self.quickWidgetJoystick:
             try:
                 self.quickWidgetJoystick.setResizeMode(QQuickWidget.SizeRootObjectToView)
-                self.quickWidgetJoystick.setSource(QUrl.fromLocalFile("tools/AnalogJoystick.qml"))
+                self.quickWidgetJoystick.setSource(QUrl.fromLocalFile("tools/ModernAnalogJoystick.qml"))
                 self.joystick_root = self.quickWidgetJoystick.rootObject()
-                
                 
                 # Connect joystick signals
                 if hasattr(self.joystick_root, 'positionChanged'):
@@ -84,7 +89,10 @@ class MainWindow (QMainWindow):
 
        
         self.quickWidgetSlider1.setResizeMode(QQuickWidget.SizeRootObjectToView)
-        self.quickWidgetSlider1.setSource(QUrl.fromLocalFile("tools/circularSlider.qml"))
+        self.quickWidgetSlider1.setClearColor(QColor("#19243d"))
+        self.quickWidgetSlider1.setAttribute(Qt.WA_TranslucentBackground)
+        self.quickWidgetSlider1.setStyleSheet("background: #19243d; border: none;")
+        self.quickWidgetSlider1.setSource(QUrl.fromLocalFile("tools/ModernCircularSlider.qml"))
         
 
          #slider renk ayarları
@@ -108,7 +116,19 @@ class MainWindow (QMainWindow):
         self.device = device
         self.verbose = False  # Flag to control our own debug output
 
-        self.statusbar.showMessage(device)
+        # Update device info in footer
+        self.gpu_util_percent = None
+        self.vram_usage_percent = None
+
+        if device == "cuda:0":
+            self.cudaLabel.setText("CUDA")
+            self.cudaLabel.setStyleSheet("color: #10B981; border-radius: 4px;")
+            self.vramLabel.setStyleSheet("color: #10B981; border-radius: 4px;")
+        else:
+            self.cudaLabel.setText("CPU")
+            self.cudaLabel.setStyleSheet("color: #F59E0B; border-radius: 4px;")
+            self.vramLabel.setText("N/A")
+            self.vramLabel.setStyleSheet("color: #6B7280; border-radius: 4px;")
 
          #timer update frame
         self.timer = QTimer()
@@ -118,6 +138,17 @@ class MainWindow (QMainWindow):
 
         self.prev_time = time.time()
         self.fps_smooth = None
+        
+        # Initialize FPS label
+        self.fpsLabel.setText("FPS: --")
+        self.fpsLabel.setStyleSheet("color: #6B7280; border-radius: 4px;")
+
+        # Refresh GPU stats every second
+        self.gpu_timer = QTimer(self)
+        self.gpu_timer.setInterval(1000)
+        self.gpu_timer.timeout.connect(self.update_gpu_stats)
+        self.gpu_timer.start()
+        self.update_gpu_stats()
 
         self.tcpCamBtn.clicked.connect(self.start_camera)
 
@@ -220,7 +251,7 @@ class MainWindow (QMainWindow):
             ip = self.ipLineEdit.text()
             camport = self.camPortLine.text()
             raspiport = int(self.raspiPortLine.text())
-            fullipCam = f"http://10.60.217.117:2002/video"
+            fullipCam = f"http://" + ip + f":" + camport + f"/video"
             
             # Show loading dialog
             self.show_loading_dialog("Kamera ve bağlantılar başlatılıyor...")
@@ -255,7 +286,7 @@ class MainWindow (QMainWindow):
         try:
             
             # Save frame using frame_saver
-            self.frame_saver.try_save(frame)
+            # self.frame_saver.try_save(frame)
 
             # Process frame with object detection
             processed_frame, fps, _, _, results = process_frame(
@@ -264,6 +295,16 @@ class MainWindow (QMainWindow):
                 frame_counter=0,
                 show_fps=True
             )
+
+            # Update FPS display
+            gpu_text = f"{self.gpu_util_percent:.0f}%" if self.gpu_util_percent is not None else "--%"
+            gpu_memory_percent = f"{self.vram_usage_percent:.0f}%" if self.vram_usage_percent is not None else "--%"
+            if fps > 0:
+                self.fpsLabel.setText(f"FPS: {fps:.0f} | Mode: {'AUTO' if self.autonomous_mode else 'MANUAL'} | VRAM: {gpu_memory_percent}")
+                self.fpsLabel.setStyleSheet("color: #10B981; border-radius: 4px;")
+            else:
+                self.fpsLabel.setText("FPS: -- | Mode: MANUAL | VRAM: --%")
+                self.fpsLabel.setStyleSheet("color: #6B7280; border-radius: 4px;")
 
             # Convert frame to QImage
             h, w, ch = processed_frame.shape
@@ -305,14 +346,66 @@ class MainWindow (QMainWindow):
                     if self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
                         self.socket_client.send_command("S")
 
-            # Update status bar with FPS
-            if fps > 0:
-                self.statusbar.showMessage(f"FPS: {fps:.1f} | Mode: {'AUTO' if self.autonomous_mode else 'MANUAL'}")
+            # No statusbar update needed - FPS label shows the same info
                 
         except Exception as e:
             print(f"Error in on_frame_received: {str(e)}")
             # Optionally show error in status bar
-            self.statusbar.showMessage(f"Error: {str(e)}")
+            
+
+    def update_gpu_stats(self):
+        """Update GPU utilization + VRAM usage every second."""
+        if not torch.cuda.is_available():
+            self.gpu_util_percent = None
+            self.vram_usage_percent = None
+            self.vramLabel.setText("N/A")
+            self.vramLabel.setStyleSheet("color: #6B7280; border-radius: 4px;")
+            return
+
+        # Preferred: query driver metrics (matches Task Manager behavior better).
+        try:
+            result = subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                    "-i",
+                    "0",
+                ],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=1.5,
+            ).strip()
+
+            util_str, mem_used_str, mem_total_str = [x.strip() for x in result.split(",")]
+            util = float(util_str)
+            mem_used = float(mem_used_str)
+            mem_total = float(mem_total_str)
+            mem_percent = (mem_used / mem_total * 100.0) if mem_total > 0 else 0.0
+
+            self.gpu_util_percent = util
+            self.vram_usage_percent = mem_percent
+            self.vramLabel.setText(f"GPU: {util:.0f}% | VRAM: {mem_used/1024:.1f}/{mem_total/1024:.1f} GB")
+            self.vramLabel.setStyleSheet("color: #10B981; border-radius: 4px;")
+            return
+        except Exception:
+            pass
+
+        # Fallback: Torch memory-only stats.
+        try:
+            mem_total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            mem_used_gb = torch.cuda.memory_allocated() / 1024**3
+            mem_percent = (mem_used_gb / mem_total_gb * 100.0) if mem_total_gb > 0 else 0.0
+
+            self.gpu_util_percent = None
+            self.vram_usage_percent = mem_percent
+            self.vramLabel.setText(f"VRAM: {mem_used_gb:.1f}/{mem_total_gb:.1f} GB ({mem_percent:.0f}%)")
+            self.vramLabel.setStyleSheet("color: #10B981; border-radius: 4px;")
+        except Exception:
+            self.gpu_util_percent = None
+            self.vram_usage_percent = None
+            self.vramLabel.setText("GPU not recognized")
+            self.vramLabel.setStyleSheet("color: #F59E0B; border-radius: 4px;")
     
     
     
@@ -361,13 +454,13 @@ class MainWindow (QMainWindow):
             if hasattr(self, 'quickWidgetJoystick'):
                 self.quickWidgetJoystick.setEnabled(False)
             self.otonoumBtn.setStyleSheet("background-color: green; color: white;")
-            self.statusbar.showMessage("Otonom modu: AÇIK")
+           
         else:
             # Enable manual control
             if hasattr(self, 'quickWidgetJoystick'):
                 self.quickWidgetJoystick.setEnabled(True)
             self.otonoumBtn.setStyleSheet("")
-            self.statusbar.showMessage("Manuel kontrol: AÇIK")
+            
             # Send stop command when switching to manual mode
             if self.socket_client:
                 self.socket_client.send_command("S")
@@ -401,6 +494,9 @@ class MainWindow (QMainWindow):
     def closeEvent(self, event):
         # Close camera thread if running
         self.close_camera()
+
+        if hasattr(self, 'gpu_timer') and self.gpu_timer.isActive():
+            self.gpu_timer.stop()
         
         # Close socket connection if exists
         if hasattr(self, 'socket_client') and self.socket_client:

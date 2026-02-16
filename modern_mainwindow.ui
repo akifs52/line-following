@@ -1,0 +1,1149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1280</width>
+    <height>720</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1280</width>
+    <height>720</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Otonom Car UI v2.4.0</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QMainWindow {
+    background-color: #151D29;
+    color: #F1F5F9;
+    font-family: 'Inter', sans-serif;
+}
+
+QWidget {
+    background-color: transparent;
+    color: #F1F5F9;
+}
+
+/* Header Styles */
+QFrame#headerFrame {
+    background-color: #0F172A;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    backdrop-filter: blur(12px);
+}
+
+QLabel#titleLabel {
+    color: #F1F5F9;
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: -0.025em;
+}
+
+QLabel#versionLabel {
+    color: #94A3B8;
+    font-size: 14px;
+    font-weight: normal;
+    margin-left: 8px;
+}
+
+/* Status Badge with Animation */
+QFrame#statusBadge {
+    background-color: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 12px;
+    padding: 4px 12px;
+}
+
+QLabel#statusDot {
+    background-color: #10B981;
+    border-radius: 3px;
+    min-width: 6px;
+    max-width: 6px;
+    min-height: 6px;
+    max-height: 6px;
+}
+
+QLabel#statusLabel {
+    color: #10B981;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Video Container with Glow */
+QFrame#videoContainer {
+    background-color: #000000;
+    border: none;
+    border-radius: 16px;
+}
+
+QLabel#videoLabel {
+    background-color: #000000;
+    border-radius: 16px;
+    border: none;
+}
+
+/* Video Overlays */
+QLabel#frontViewBadge {
+    background-color: rgba(0, 0, 0, 0.5);
+    color: #F1F5F9;
+}
+
+/* Control Panel */
+QFrame#controlPanel {
+    background-color: rgba(51, 65, 85, 0.9);
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 16px;
+}
+
+/* Input Fields - Dark Theme */
+QLineEdit {
+    background-color: rgba(30, 41, 59, 0.8);
+    color: #F1F5F9;
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    selection-background-color: rgba(59, 130, 246, 0.3);
+}
+
+QLineEdit:hover {
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    background-color: rgba(30, 41, 59, 0.9);
+}
+
+QLineEdit:focus {
+    border: 1px solid #3B82F6;
+    background-color: rgba(30, 41, 59, 0.95);
+}
+
+QLineEdit::placeholder {
+    color: rgba(148, 163, 184, 0.6);
+}
+
+/* Buttons - Dark Theme */
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1E293B, stop:1 #334155);
+    color: #F1F5F9;
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #334155, stop:1 #475569);
+    border: 1px solid #3B82F6;
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1E293B, stop:1 #0F172A);
+    border: 1px solid #2563EB;
+}
+
+/* Side Panels - Dark */
+QFrame#velocityPanel, QFrame#steeringPanel,QFrame#controlPanel {
+    background-color: #19243d;
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 16px;
+}
+
+/* Labels - Dark Theme */
+QLabel#velocitySectionLabel, QLabel#steeringSectionLabel {
+    color: #94A3B8;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+QLabel#tempLabel, QLabel#loadLabel, QLabel#steeringStatusLabel {
+    color: #64748B;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+QLabel#tempValue, QLabel#loadValue, QLabel#steeringStatusValue {
+    color: #F1F5F9;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* Separator */
+QLabel#separator {
+    background-color: #334155;
+}
+
+/* Footer - Dark */
+QFrame#footerFrame {
+    background-color: #0F172A;
+    border-top: 1px solid rgba(51, 65, 85, 0.6);
+    color: #94A3B8;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+}
+
+QLabel#footerLabel {
+    color: #64748B;
+    font-size: 11px;
+}
+
+QLabel#smallIconLabel {
+    color: #94A3B8;
+    font-size: 14px;
+}</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <property name="styleSheet">
+    <string notr="true">QWidget#centralwidget {
+	background-color: #000000;
+}</string>
+   </property>
+   <layout class="QVBoxLayout" name="mainLayout">
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item>
+     <widget class="QFrame" name="headerFrame">
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>30</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>16777215</width>
+        <height>40</height>
+       </size>
+      </property>
+      <layout class="QHBoxLayout" name="headerLayout">
+       <property name="leftMargin">
+        <number>24</number>
+       </property>
+       <property name="topMargin">
+        <number>8</number>
+       </property>
+       <property name="rightMargin">
+        <number>24</number>
+       </property>
+       <property name="bottomMargin">
+        <number>8</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="iconLabel">
+         <property name="text">
+          <string>🚗</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="titleLabel">
+         <property name="text">
+          <string>Otonom Car UI</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="versionLabel">
+         <property name="text">
+          <string/>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QFrame" name="statusBadge">
+         <layout class="QHBoxLayout" name="statusLayout">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="statusDot">
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="statusLabel">
+            <property name="text">
+             <string>SYSTEM READY</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="settingsButton">
+         <property name="minimumSize">
+          <size>
+           <width>32</width>
+           <height>32</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>32</width>
+           <height>32</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>⚙️</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="contentLayout">
+      <property name="spacing">
+       <number>5</number>
+      </property>
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>10</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>5</number>
+      </property>
+      <item>
+       <layout class="QVBoxLayout" name="mainContentLayout">
+        <property name="spacing">
+         <number>5</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="videoContainer">
+          <property name="minimumSize">
+           <size>
+            <width>800</width>
+            <height>450</height>
+           </size>
+          </property>
+          <layout class="QVBoxLayout" name="videoLayout">
+           <property name="spacing">
+            <number>0</number>
+           </property>
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="CamLabel">
+             <property name="text">
+              <string/>
+             </property>
+             <property name="scaledContents">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="controlPanel">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>120</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>120</height>
+           </size>
+          </property>
+          <layout class="QHBoxLayout" name="controlLayout">
+           <property name="leftMargin">
+            <number>24</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="rightMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>5</number>
+           </property>
+           <item>
+            <layout class="QVBoxLayout" name="ipLayout">
+             <property name="spacing">
+              <number>6</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="ipInputLayout">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="ipIcon">
+                 <property name="minimumSize">
+                  <size>
+                   <width>16</width>
+                   <height>16</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16</width>
+                   <height>16</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>🌐</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="ipLineEdit">
+                 <property name="minimumSize">
+                  <size>
+                   <width>192</width>
+                   <height>32</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>192</width>
+                   <height>32</height>
+                  </size>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLineEdit {
+    background-color: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 8px;
+    padding: 8px 16px;
+    color: #E2E8F0;
+    font-size: 14px;
+    outline: none;
+}
+
+QLineEdit:hover {
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    background-color: rgba(30, 41, 59, 0.7);
+}
+
+QLineEdit:focus {
+    border: 1px solid #3B82F6;
+    background-color: rgba(59, 130, 246, 0.05);
+}</string>
+                 </property>
+                 <property name="placeholderText">
+                  <string>192.168.1.1</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QVBoxLayout" name="verticalLayout">
+                 <property name="leftMargin">
+                  <number>5</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>7</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="camPortLine">
+                   <property name="minimumSize">
+                    <size>
+                     <width>0</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>16777215</width>
+                     <height>30</height>
+                    </size>
+                   </property>
+                   <property name="styleSheet">
+                    <string>QLineEdit {
+    background-color: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 8px;
+    padding: 8px 16px;
+    color: #E2E8F0;
+    font-size: 14px;
+    outline: none;
+}
+
+QLineEdit:hover {
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    background-color: rgba(30, 41, 59, 0.7);
+}
+
+QLineEdit:focus {
+    border: 1px solid #3B82F6;
+    background-color: rgba(59, 130, 246, 0.05);
+}</string>
+                   </property>
+                   <property name="placeholderText">
+                    <string>Camera Port</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="raspiPortLine">
+                   <property name="minimumSize">
+                    <size>
+                     <width>0</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>16777215</width>
+                     <height>30</height>
+                    </size>
+                   </property>
+                   <property name="styleSheet">
+                    <string>QLineEdit {
+    background-color: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 8px;
+    padding: 8px 16px;
+    color: #E2E8F0;
+    font-size: 14px;
+    outline: none;
+}
+
+QLineEdit:hover {
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    background-color: rgba(30, 41, 59, 0.7);
+}
+
+QLineEdit:focus {
+    border: 1px solid #3B82F6;
+    background-color: rgba(59, 130, 246, 0.05);
+}</string>
+                   </property>
+                   <property name="placeholderText">
+                    <string>Host Port</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <widget class="QPushButton" name="tcpCamBtn">
+             <property name="minimumSize">
+              <size>
+               <width>100</width>
+               <height>48</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3B82F6, stop:1 #2563EB);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563EB, stop:1 #1D4ED8);
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1D4ED8, stop:1 #1E40AF);
+}</string>
+             </property>
+             <property name="text">
+              <string>TCP/Cam</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="closeCam">
+             <property name="minimumSize">
+              <size>
+               <width>100</width>
+               <height>48</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3B82F6, stop:1 #2563EB);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563EB, stop:1 #1D4ED8);
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1D4ED8, stop:1 #1E40AF);
+}</string>
+             </property>
+             <property name="text">
+              <string>Close</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="horizontalSpacer_2">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="otonoumBtn">
+             <property name="minimumSize">
+              <size>
+               <width>100</width>
+               <height>48</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3B82F6, stop:1 #2563EB);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563EB, stop:1 #1D4ED8);
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1D4ED8, stop:1 #1E40AF);
+}</string>
+             </property>
+             <property name="text">
+              <string>Start Otonoum Drive</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QVBoxLayout" name="sidePanelLayout">
+        <property name="spacing">
+         <number>5</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="velocityPanel">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>280</height>
+           </size>
+          </property>
+          <layout class="QVBoxLayout" name="velocityLayout">
+           <property name="spacing">
+            <number>12</number>
+           </property>
+           <property name="leftMargin">
+            <number>12</number>
+           </property>
+           <property name="topMargin">
+            <number>12</number>
+           </property>
+           <property name="rightMargin">
+            <number>12</number>
+           </property>
+           <property name="bottomMargin">
+            <number>12</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="velocitySectionLabel">
+             <property name="text">
+              <string>Velocity</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QVBoxLayout" name="gaugeLayout">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <item>
+              <widget class="QQuickWidget" name="quickWidgetSlider1">
+               <property name="minimumSize">
+                <size>
+                 <width>192</width>
+                 <height>192</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>192</width>
+                 <height>192</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true"/>
+               </property>
+               <property name="resizeMode">
+                <enum>QQuickWidget::ResizeMode::SizeRootObjectToView</enum>
+               </property>
+               <property name="source">
+                <url>
+                 <string>tools/ModernCircularSlider.qml</string>
+                </url>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="statsLayout">
+             <property name="spacing">
+              <number>24</number>
+             </property>
+             <item>
+              <layout class="QVBoxLayout" name="tempLayout">
+               <property name="spacing">
+                <number>4</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="tempLabel">
+                 <property name="text">
+                  <string>Temp</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="tempValue">
+                 <property name="text">
+                  <string>32°C</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <widget class="QLabel" name="separator">
+               <property name="minimumSize">
+                <size>
+                 <width>1</width>
+                 <height>32</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>1</width>
+                 <height>32</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: #334155;</string>
+               </property>
+               <property name="text">
+                <string/>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <layout class="QVBoxLayout" name="loadLayout">
+               <property name="spacing">
+                <number>4</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="loadLabel">
+                 <property name="text">
+                  <string>Load</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="loadValue">
+                 <property name="text">
+                  <string>14%</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="steeringPanel">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>280</height>
+           </size>
+          </property>
+          <layout class="QVBoxLayout" name="steeringLayout">
+           <property name="spacing">
+            <number>12</number>
+           </property>
+           <property name="leftMargin">
+            <number>12</number>
+           </property>
+           <property name="topMargin">
+            <number>12</number>
+           </property>
+           <property name="rightMargin">
+            <number>12</number>
+           </property>
+           <property name="bottomMargin">
+            <number>12</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="steeringSectionLabel">
+             <property name="text">
+              <string>Steering Control</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="joystickContainer">
+             <property name="minimumSize">
+              <size>
+               <width>192</width>
+               <height>192</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>192</width>
+               <height>192</height>
+              </size>
+             </property>
+             <layout class="QVBoxLayout" name="joystickLayout">
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QQuickWidget" name="quickWidgetJoystick">
+                <property name="styleSheet">
+                 <string>QQuickWidget {
+    background-color: transparent;
+    border: none;
+}</string>
+                </property>
+                <property name="resizeMode">
+                 <enum>QQuickWidget::ResizeMode::SizeRootObjectToView</enum>
+                </property>
+                <property name="source">
+                 <url>
+                  <string>tools/ModernAnalogJoystick.qml</string>
+                 </url>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <layout class="QVBoxLayout" name="steeringStatusLayout">
+             <property name="spacing">
+              <number>4</number>
+             </property>
+             <property name="leftMargin">
+              <number>1</number>
+             </property>
+             <property name="topMargin">
+              <number>1</number>
+             </property>
+             <property name="rightMargin">
+              <number>1</number>
+             </property>
+             <property name="bottomMargin">
+              <number>1</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="steeringStatusLabel">
+               <property name="text">
+                <string>Status</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="steeringStatusValue">
+               <property name="text">
+                <string>Inactive</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QFrame" name="footerFrame">
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>32</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>16777215</width>
+        <height>32</height>
+       </size>
+      </property>
+      <layout class="QHBoxLayout" name="footerLayout">
+       <property name="leftMargin">
+        <number>16</number>
+       </property>
+       <property name="topMargin">
+        <number>4</number>
+       </property>
+       <property name="rightMargin">
+        <number>16</number>
+       </property>
+       <property name="bottomMargin">
+        <number>4</number>
+       </property>
+       <item>
+        <layout class="QHBoxLayout" name="leftFooterLayout">
+         <property name="spacing">
+          <number>16</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <layout class="QHBoxLayout" name="cudaLayout">
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="cudaDot">
+             <property name="minimumSize">
+              <size>
+               <width>8</width>
+               <height>8</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>8</width>
+               <height>8</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: #10B981;
+border-radius: 4px;</string>
+             </property>
+             <property name="text">
+              <string/>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="cudaLabel">
+             <property name="text">
+              <string>CUDA:0</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="vramLayout">
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="vramIcon">
+             <property name="text">
+              <string>💾</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="vramLabel">
+             <property name="text">
+              <string>VRAM: 2.4 / 8.0 GB</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_3">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="rightFooterLayout">
+         <property name="spacing">
+          <number>16</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="fpsLabel">
+           <property name="text">
+            <string>FPS: 60.0</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="signalIcon">
+           <property name="text">
+            <string>📶</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QQuickWidget</class>
+   <extends>QWidget</extends>
+   <header location="global">QtQuickWidgets/QQuickWidget</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>
