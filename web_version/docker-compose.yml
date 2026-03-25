@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  web-app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./best.pt:/app/best.pt
+    environment:
+      - PYTHONPATH=/app
+    command: uvicorn web_app:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    
+  camera-client:
+    build: .
+    volumes:
+      - .:/app
+      - ./best.pt:/app/best.pt
+    environment:
+      - PYTHONPATH=/app
+    command: python camera_client.py
+    depends_on:
+      - web-app
+    restart: unless-stopped
+    # Uncomment for camera access
+    # devices:
+    #   - /dev/video0:/dev/video0
