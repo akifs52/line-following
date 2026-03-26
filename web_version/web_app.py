@@ -103,6 +103,9 @@ HTML_TEMPLATE = """
         .center-dot-glow {
             transition: all 0.15s ease;
         }
+        .velocity-dial {
+            touch-action: none;
+        }
         body {
             min-height: max(884px, 100dvh);
         }
@@ -164,54 +167,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Connection Panel -->
-        <div class="glass p-6 rounded-[2.5rem] flex flex-col space-y-4">
-            <div class="flex justify-between items-start">
-                <span class="text-[12px] uppercase font-bold text-slate-500">Connection</span>
-                <span class="material-icons-round text-primary text-lg">lan</span>
-            </div>
-            <div class="grid grid-cols-2 gap-6">
-                <div class="space-y-4">
-                    <div class="space-y-3">
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs opacity-70">IP</span>
-                            <span id="ipDisplay" class="text-xs font-mono text-slate-300">192.168.1.100</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs opacity-70">Port</span>
-                            <span id="portDisplay" class="text-xs font-mono text-slate-300">8001</span>
-                        </div>
-                    </div>
-                    <button id="startBtn" class="w-full bg-green-500/20 text-green-500 border border-green-500/30 rounded-lg py-2 text-sm font-bold hover:bg-green-500/30 transition-colors flex items-center justify-center gap-2">
-                        <span class="material-icons-round text-sm">play_arrow</span>
-                        START
-                    </button>
-                </div>
-                <div class="space-y-3">
-                    <div class="flex flex-col gap-1">
-                        <label class="text-[8px] font-bold uppercase tracking-wider text-slate-400">Raspberry Pi IP</label>
-                        <div class="relative">
-                            <span class="material-icons-round absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">router</span>
-                            <input id="raspiIp" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-slate-200 outline-none" placeholder="192.168.1.100" type="text"/>
-                        </div>
-                    </div>
-                    <div class="flex flex-col gap-1">
-                        <label class="text-[8px] font-bold uppercase tracking-wider text-slate-400">Ports</label>
-                        <div class="flex gap-2">
-                            <div class="relative flex-1">
-                                <span class="material-icons-round absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">lan</span>
-                                <input id="hostPort" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg pl-8 pr-2 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-slate-200 outline-none" placeholder="Host:8000" type="text"/>
-                            </div>
-                            <div class="relative flex-1">
-                                <span class="material-icons-round absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">settings_ethernet</span>
-                                <input id="raspiPort" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg pl-8 pr-2 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-slate-200 outline-none" placeholder="Raspi:8001" type="text"/>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- Steering and Velocity Panels -->
         <div class="grid grid-cols-2 gap-4">
             <!-- Steering Control -->
@@ -219,12 +174,12 @@ HTML_TEMPLATE = """
                 <div class="absolute top-4 left-6">
                     <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Steering Control</h3>
                 </div>
-                <div id="joystick" class="relative w-44 h-44 rounded-full border border-slate-700/50 flex items-center justify-center bg-slate-900/30">
-                    <div class="absolute inset-0 border border-white/5 rounded-full scale-75"></div>
-                    <div class="absolute w-[1px] h-full bg-white/5 left-1/2 -translate-x-1/2"></div>
-                    <div class="absolute h-[1px] w-full bg-white/5 top-1/2 -translate-y-1/2"></div>
-                    <div id="joystickHandle" class="w-20 h-20 rounded-full bg-primary shadow-[0_0_30px_rgba(59,130,246,0.5)] flex items-center justify-center text-white cursor-pointer hover:scale-105 transition-transform">
-                        <span class="material-icons-round text-3xl">add</span>
+                <div class="mt-8 mb-4">
+                    <div id="joystick" class="relative w-36 h-36 rounded-full border border-slate-700/50 flex items-center justify-center bg-slate-900/30">
+                        <div class="absolute inset-0 border border-white/5 rounded-full scale-75"></div>
+                        <div class="absolute w-[1px] h-full bg-white/5 left-1/2 -translate-x-1/2"></div>
+                        <div class="absolute h-[1px] w-full bg-white/5 top-1/2 -translate-y-1/2"></div>
+                        <div id="joystickHandle" class="w-20 h-20 rounded-full bg-primary shadow-[0_0_30px_rgba(59,130,246,0.5)] flex items-center justify-center text-white cursor-pointer transition-all duration-200 ease-out"></div>
                     </div>
                 </div>
                 <div class="mt-5 text-center space-y-1">
@@ -244,33 +199,53 @@ HTML_TEMPLATE = """
                 <div class="absolute top-4 left-6">
                     <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Velocity</h3>
                 </div>
-                <div class="relative w-44 h-44 rounded-full border border-slate-700/50 flex items-center justify-center bg-slate-900/30">
-                    <div class="absolute inset-0 flex items-center justify-center">
-                        <div class="w-32 h-32 rounded-full border-4 border-slate-200/20 dark:border-white/5 relative flex items-center justify-center">
-                            <div class="absolute inset-0 speed-gauge opacity-40 rounded-full"></div>
-                            <div class="text-center z-10">
-                                <span id="speedValue" class="text-4xl font-black text-primary">48</span>
-                                <p class="text-[10px] uppercase font-bold text-slate-500 tracking-widest">km/h</p>
-                            </div>
+                <div id="velocityDial" class="velocity-dial relative w-40 h-40 rounded-full bg-[#19243d] flex items-center justify-center select-none cursor-pointer">
+                    <svg class="absolute inset-0 w-full h-full" viewBox="0 0 160 160">
+                        <g transform="rotate(-135 80 80)">
+                            <circle id="velocityArcBg" cx="80" cy="80" r="76" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="9" stroke-linecap="round"/>
+                            <circle id="velocityArcFg" cx="80" cy="80" r="76" fill="none" stroke="#3B82F6" stroke-width="9" stroke-linecap="round"/>
+                        </g>
+                    </svg>
+                    <div id="velocityGlow" class="absolute" style="width:20px;height:20px;border-radius:10px;background:#3B82F6;opacity:0.4;pointer-events:none;"></div>
+                    <div id="velocityHandle" class="absolute" style="width:16px;height:16px;border-radius:8px;background:#4F8DF9;pointer-events:none;"></div>
+                    <div class="text-center z-10">
+                        <div id="speedValue" class="text-4xl font-semibold text-slate-200">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection Panel -->
+        <div class="glass p-6 rounded-[2.5rem] flex flex-col space-y-4">
+            <div class="flex justify-between items-start">
+                <span class="text-[12px] uppercase font-bold text-slate-500">Connection</span>
+                <span class="material-icons-round text-primary text-lg">lan</span>
+            </div>
+            <div class="space-y-4">
+                <div class="flex flex-col gap-1">
+                    <label class="text-[8px] font-bold uppercase tracking-wider text-slate-400">Raspberry Pi IP</label>
+                    <div class="relative">
+                        <span class="material-icons-round absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">router</span>
+                        <input id="raspiIp" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-slate-200 outline-none" placeholder="192.168.1.100" type="text"/>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label class="text-[8px] font-bold uppercase tracking-wider text-slate-400">Ports</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="relative">
+                            <span class="material-icons-round absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">lan</span>
+                            <input id="hostPort" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg pl-8 pr-2 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-slate-200 outline-none" placeholder="Host:8000" type="text"/>
+                        </div>
+                        <div class="relative">
+                            <span class="material-icons-round absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">settings_ethernet</span>
+                            <input id="raspiPort" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg pl-8 pr-2 py-1.5 text-xs focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-slate-200 outline-none" placeholder="Raspi:8001" type="text"/>
                         </div>
                     </div>
-                    <div class="absolute bottom-4 flex space-x-1">
-                        <span class="w-1 h-1 rounded-full bg-primary"></span>
-                        <span class="w-1 h-1 rounded-full bg-primary"></span>
-                        <span class="w-1 h-1 rounded-full bg-primary/20"></span>
-                        <span class="w-1 h-1 rounded-full bg-primary/20"></span>
-                    </div>
                 </div>
-                <div class="mt-5 text-center space-y-1">
-                    <div>
-                        <p class="text-[10px] font-semibold text-slate-500 uppercase tracking-tighter">Current</p>
-                        <p class="text-sm font-bold text-primary">48 km/h</p>
-                    </div>
-                    <div>
-                        <p class="text-[10px] font-semibold text-slate-500 uppercase tracking-tighter">Max</p>
-                        <p class="text-sm font-bold text-slate-400">100 km/h</p>
-                    </div>
-                </div>
+                <button id="startBtn" class="w-full bg-green-500/20 text-green-500 border border-green-500/30 rounded-lg py-2 text-sm font-bold hover:bg-green-500/30 transition-colors flex items-center justify-center gap-2">
+                    <span class="material-icons-round text-sm">play_arrow</span>
+                    START
+                </button>
             </div>
         </div>
     </main>
@@ -314,9 +289,12 @@ HTML_TEMPLATE = """
         
         // Status elements
         const speedValue = document.getElementById('speedValue');
+        const velocityDial = document.getElementById('velocityDial');
+        const velocityArcBg = document.getElementById('velocityArcBg');
+        const velocityArcFg = document.getElementById('velocityArcFg');
+        const velocityHandle = document.getElementById('velocityHandle');
+        const velocityGlow = document.getElementById('velocityGlow');
         const steeringMode = document.getElementById('steeringMode');
-        const ipDisplay = document.getElementById('ipDisplay');
-        const portDisplay = document.getElementById('portDisplay');
         const startBtn = document.getElementById('startBtn');
         const deviceInfo = document.getElementById('deviceInfo');
         const cpuInfo = document.getElementById('cpuInfo');
@@ -327,7 +305,71 @@ HTML_TEMPLATE = """
         let autonomousMode = false;
         let currentSpeed = 0;
         let joystickActive = false;
-        let centerX, centerY;
+        let velocityActive = false;
+        
+        const velocityConfig = {
+            min: 0,
+            max: 255,
+            startAngle: -135,
+            sweep: 270,
+            radius: 76
+        };
+        
+        const velocityCircumference = 2 * Math.PI * velocityConfig.radius;
+        const velocityArcLength = velocityCircumference * (velocityConfig.sweep / 360);
+        
+        if (velocityArcBg && velocityArcFg) {
+            velocityArcBg.style.strokeDasharray = `${velocityArcLength} ${velocityCircumference}`;
+            velocityArcFg.style.strokeDasharray = `0 ${velocityCircumference}`;
+        }
+        
+        function updateVelocityDial(value) {
+            const ratio = Math.max(0, Math.min(1, (value - velocityConfig.min) / (velocityConfig.max - velocityConfig.min)));
+            const arcValue = velocityArcLength * ratio;
+            
+            if (velocityArcFg) {
+                velocityArcFg.style.strokeDasharray = `${arcValue} ${velocityCircumference}`;
+            }
+            
+            const angle = velocityConfig.startAngle + ratio * velocityConfig.sweep;
+            const rad = angle * Math.PI / 180;
+            const x = Math.cos(rad) * velocityConfig.radius;
+            const y = Math.sin(rad) * velocityConfig.radius;
+            
+            if (velocityHandle) {
+                velocityHandle.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+            }
+            if (velocityGlow) {
+                velocityGlow.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+            }
+        }
+        
+        function setVelocityValue(value, options = {}) {
+            const { send = false } = options;
+            const clamped = Math.round(Math.max(velocityConfig.min, Math.min(velocityConfig.max, value)));
+            
+            currentSpeed = clamped;
+            speedValue.textContent = clamped;
+            updateVelocityDial(clamped);
+            
+            if (send) {
+                ws.send(JSON.stringify({
+                    type: 'speed',
+                    value: clamped
+                }));
+            }
+        }
+        
+        if (velocityHandle) {
+            velocityHandle.style.left = '50%';
+            velocityHandle.style.top = '50%';
+        }
+        if (velocityGlow) {
+            velocityGlow.style.left = '50%';
+            velocityGlow.style.top = '50%';
+        }
+        setVelocityValue(0, { send: false });
+        
         
         // WebSocket events
         ws.onopen = function() {
@@ -351,8 +393,8 @@ HTML_TEMPLATE = """
                 cpuInfo.textContent = `CPU: ${data.cpu || '12'}%`;
                 
             } else if (data.type === 'speed') {
-                currentSpeed = data.speed;
-                speedValue.textContent = currentSpeed;
+                const nextSpeed = data.speed ?? data.value ?? 0;
+                setVelocityValue(nextSpeed, { send: false });
             }
         };
         
@@ -361,10 +403,6 @@ HTML_TEMPLATE = """
             if (autonomousMode) return;
             
             joystickActive = true;
-            const rect = joystick.getBoundingClientRect();
-            centerX = rect.left + rect.width / 2;
-            centerY = rect.top + rect.height / 2;
-            
             document.addEventListener('mousemove', moveJoystick);
             document.addEventListener('mouseup', endJoystick);
             document.addEventListener('touchmove', moveJoystick);
@@ -393,23 +431,13 @@ HTML_TEMPLATE = """
                 deltaY = Math.sin(angle) * maxDistance;
             }
             
-            // Position handle
-            joystickHandle.style.left = `${rect.width / 2 - joystickHandle.offsetWidth / 2 + deltaX}px`;
-            joystickHandle.style.top = `${rect.height / 2 - joystickHandle.offsetHeight / 2 + deltaY}px`;
+            joystickHandle.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
             
-            // Update speed gauge based on joystick position
-            const speed = Math.round(Math.sqrt(deltaX * deltaX + deltaY * deltaY) / maxDistance * 100);
-            currentSpeed = speed;
-            speedValue.textContent = currentSpeed;
-            
-            // Send joystick position
-            const x = deltaX / maxDistance;
-            const y = -deltaY / maxDist;
-            
+            // Send position
             ws.send(JSON.stringify({
                 type: 'joystick',
-                x: x,
-                y: y,
+                x: deltaX / maxDistance,
+                y: -deltaY / maxDistance,
                 speed: currentSpeed
             }));
         }
@@ -419,14 +447,8 @@ HTML_TEMPLATE = """
             
             joystickActive = false;
             
-            // Reset handle to center
-            const rect = joystick.getBoundingClientRect();
-            joystickHandle.style.left = `${rect.width / 2 - joystickHandle.offsetWidth / 2}px`;
-            joystickHandle.style.top = `${rect.height / 2 - joystickHandle.offsetHeight / 2}px`;
-            
-            // Reset speed gauge
-            currentSpeed = 0;
-            speedValue.textContent = '0';
+            // Reset handle to center with smooth animation
+            joystickHandle.style.transform = 'translate(0px, 0px)';
             
             // Send stop command
             ws.send(JSON.stringify({
@@ -444,13 +466,9 @@ HTML_TEMPLATE = """
         
         // Raspberry Pi connection
         function connectToRaspberryPi() {
-            const ip = raspiIp.value || '192.168.1.100';
-            const hPort = hostPort.value || '8000';
-            const rPort = raspiPort.value || '8001';
-            
-            // Update connection displays
-            ipDisplay.textContent = ip;
-            portDisplay.textContent = rPort;
+            const ip = raspiIp.value;
+            const hPort = hostPort.value;
+            const rPort = raspiPort.value;
             
             // Send connection info
             ws.send(JSON.stringify({
@@ -463,8 +481,8 @@ HTML_TEMPLATE = """
         
         // Start button functionality
         function startConnection() {
-            const ip = raspiIp.value || '192.168.1.100';
-            const port = raspiPort.value || '8001';
+            const ip = raspiIp.value;
+            const port = raspiPort.value;
             
             // Update button state
             startBtn.innerHTML = '<span class="material-icons-round text-xs">refresh</span>CONNECTING...';
@@ -491,6 +509,50 @@ HTML_TEMPLATE = """
         // Event listeners
         joystick.addEventListener('mousedown', startJoystick);
         joystick.addEventListener('touchstart', startJoystick);
+        
+        function updateVelocityFromPointer(clientX, clientY, send) {
+            if (!velocityDial || autonomousMode) return;
+            const rect = velocityDial.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dx = clientX - cx;
+            const dy = clientY - cy;
+            
+            let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+            const start = velocityConfig.startAngle;
+            const end = velocityConfig.startAngle + velocityConfig.sweep;
+            
+            if (deg < start) deg = start;
+            if (deg > end) deg = end;
+            
+            const ratio = (deg - start) / velocityConfig.sweep;
+            const value = velocityConfig.min + ratio * (velocityConfig.max - velocityConfig.min);
+            setVelocityValue(value, { send });
+        }
+        
+        if (velocityDial) {
+            velocityDial.addEventListener('pointerdown', function(e) {
+                velocityActive = true;
+                velocityDial.setPointerCapture(e.pointerId);
+                updateVelocityFromPointer(e.clientX, e.clientY, true);
+            });
+            
+            velocityDial.addEventListener('pointermove', function(e) {
+                if (!velocityActive) return;
+                updateVelocityFromPointer(e.clientX, e.clientY, true);
+            });
+            
+            const endVelocityDrag = function(e) {
+                if (!velocityActive) return;
+                velocityActive = false;
+                if (velocityDial.hasPointerCapture(e.pointerId)) {
+                    velocityDial.releasePointerCapture(e.pointerId);
+                }
+            };
+            
+            velocityDial.addEventListener('pointerup', endVelocityDrag);
+            velocityDial.addEventListener('pointercancel', endVelocityDrag);
+        }
         
         // Raspberry Pi input listeners
         raspiIp.addEventListener('change', connectToRaspberryPi);
@@ -537,59 +599,53 @@ HTML_TEMPLATE = """
             }
         });
         
-        // Keyboard controls (WASD for joystick)
-        document.addEventListener('keydown', function(e) {
-            if (autonomousMode) return;
+        // Keyboard controls (WASD + arrows, supports diagonal)
+        const pressedKeys = new Set();
+        const validKeys = new Set(['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+        
+        function updateKeyboardJoystick() {
+            if (autonomousMode || joystickActive || velocityActive) return;
             
-            const key = e.key.toLowerCase();
             const rect = joystick.getBoundingClientRect();
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
             const maxDistance = rect.width / 2 - joystickHandle.offsetWidth / 2;
             
-            let x = 0, y = 0;
+            const up = pressedKeys.has('w') || pressedKeys.has('arrowup');
+            const down = pressedKeys.has('s') || pressedKeys.has('arrowdown');
+            const left = pressedKeys.has('a') || pressedKeys.has('arrowleft');
+            const right = pressedKeys.has('d') || pressedKeys.has('arrowright');
             
-            if (key === 'w' || key === 'arrowup') y = -maxDistance;
-            if (key === 's' || key === 'arrowdown') y = maxDistance;
-            if (key === 'a' || key === 'arrowleft') x = -maxDistance;
-            if (key === 'd' || key === 'arrowright') x = maxDistance;
+            let x = 0;
+            let y = 0;
             
-            // Update handle position
-            joystickHandle.style.left = `${centerX - joystickHandle.offsetWidth / 2 + x}px`;
-            joystickHandle.style.top = `${centerY - joystickHandle.offsetHeight / 2 + y}px`;
+            if (up && !down) y = -maxDistance;
+            if (down && !up) y = maxDistance;
+            if (left && !right) x = -maxDistance;
+            if (right && !left) x = maxDistance;
             
-            // Update speed
-            const distance = Math.sqrt(x * x + y * y);
-            currentSpeed = Math.round((distance / maxDistance) * 100);
-            speedValue.textContent = currentSpeed;
+            joystickHandle.style.transform = `translate(${x}px, ${y}px)`;
             
-            // Send position
             ws.send(JSON.stringify({
                 type: 'joystick',
-                x: x / maxDistance,
-                y: -y / maxDistance,
+                x: maxDistance ? x / maxDistance : 0,
+                y: maxDistance ? -y / maxDistance : 0,
                 speed: currentSpeed
             }));
+        }
+        
+        document.addEventListener('keydown', function(e) {
+            const key = e.key.toLowerCase();
+            if (!validKeys.has(key)) return;
+            
+            pressedKeys.add(key);
+            updateKeyboardJoystick();
         });
         
         document.addEventListener('keyup', function(e) {
             const key = e.key.toLowerCase();
-            if (['w', 's', 'a', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
-                // Reset joystick
-                const rect = joystick.getBoundingClientRect();
-                joystickHandle.style.left = `${rect.width / 2 - joystickHandle.offsetWidth / 2}px`;
-                joystickHandle.style.top = `${rect.height / 2 - joystickHandle.offsetHeight / 2}px`;
-                
-                currentSpeed = 0;
-                speedValue.textContent = '0';
-                
-                ws.send(JSON.stringify({
-                    type: 'joystick',
-                    x: 0,
-                    y: 0,
-                    speed: 0
-                }));
-            }
+            if (!validKeys.has(key)) return;
+            
+            pressedKeys.delete(key);
+            updateKeyboardJoystick();
         });
     </script>
 </body>
