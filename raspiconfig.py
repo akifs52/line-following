@@ -9,17 +9,22 @@ import RPi.GPIO as GPIO
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-ENA = 18
-ENB = 19
-IN1 = 23
-IN2 = 24
-IN3 = 27
-IN4 = 22
+# New pin assignments
+PWMA = 12
+PWMB = 13
+AIN1 = 27
+AIN2 = 22
+BIN1 = 23
+BIN2 = 24
+STBY = 6
 
-GPIO.setup([ENA, ENB, IN1, IN2, IN3, IN4], GPIO.OUT)
+GPIO.setup([PWMA, PWMB, AIN1, AIN2, BIN1, BIN2, STBY], GPIO.OUT)
 
-pwmA = GPIO.PWM(ENA, 1000)
-pwmB = GPIO.PWM(ENB, 1000)
+# Enable motor driver
+GPIO.output(STBY, GPIO.HIGH)
+
+pwmA = GPIO.PWM(PWMA, 1000)
+pwmB = GPIO.PWM(PWMB, 1000)
 pwmA.start(0)
 pwmB.start(0)
 
@@ -34,42 +39,49 @@ TIMEOUT_SEC = 3.0
 # MOTOR FUNCTIONS
 # =====================
 def stop():
-    GPIO.output([IN1, IN2, IN3, IN4], GPIO.LOW)
+    GPIO.output([AIN1, AIN2, BIN1, BIN2], GPIO.LOW)
     pwmA.ChangeDutyCycle(0)
     pwmB.ChangeDutyCycle(0)
-    print("[MOTOR] STOP")
+    GPIO.output(STBY, GPIO.LOW)  # Disable motor driver
+    print("[MOTOR] STOP - STBY disabled")
 
 def forward():
-    GPIO.output(IN1, GPIO.HIGH)
-    GPIO.output(IN2, GPIO.LOW)
-    GPIO.output(IN3, GPIO.HIGH)
-    GPIO.output(IN4, GPIO.LOW)
+    GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
+    GPIO.output(AIN1, GPIO.HIGH)
+    GPIO.output(AIN2, GPIO.LOW)
+    GPIO.output(BIN1, GPIO.HIGH)
+    GPIO.output(BIN2, GPIO.LOW)
 
 def left():
-    GPIO.output(IN1, GPIO.LOW)
-    GPIO.output(IN2, GPIO.HIGH)
-    GPIO.output(IN3, GPIO.HIGH)
-    GPIO.output(IN4, GPIO.LOW)
+    GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
+    GPIO.output(AIN1, GPIO.LOW)
+    GPIO.output(AIN2, GPIO.HIGH)
+    GPIO.output(BIN1, GPIO.HIGH)
+    GPIO.output(BIN2, GPIO.LOW)
 
 def right():
-    GPIO.output(IN1, GPIO.HIGH)
-    GPIO.output(IN2, GPIO.LOW)
-    GPIO.output(IN3, GPIO.LOW)
-    GPIO.output(IN4, GPIO.HIGH)
+    GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
+    GPIO.output(AIN1, GPIO.HIGH)
+    GPIO.output(AIN2, GPIO.LOW)
+    GPIO.output(BIN1, GPIO.LOW)
+    GPIO.output(BIN2, GPIO.HIGH)
 
 def cross_left():
-    GPIO.output(IN1, GPIO.LOW)
-    GPIO.output(IN2, GPIO.HIGH)
-    GPIO.output(IN3, GPIO.HIGH)
-    GPIO.output(IN4, GPIO.LOW)
+    GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
+    GPIO.output(AIN1, GPIO.LOW)
+    GPIO.output(AIN2, GPIO.HIGH)
+    GPIO.output(BIN1, GPIO.HIGH)
+    GPIO.output(BIN2, GPIO.LOW)
 
 def cross_right():
-    GPIO.output(IN1, GPIO.HIGH)
-    GPIO.output(IN2, GPIO.LOW)
-    GPIO.output(IN3, GPIO.LOW)
-    GPIO.output(IN4, GPIO.HIGH)
+    GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
+    GPIO.output(AIN1, GPIO.HIGH)
+    GPIO.output(AIN2, GPIO.LOW)
+    GPIO.output(BIN1, GPIO.LOW)
+    GPIO.output(BIN2, GPIO.HIGH)
 
 def apply_speed():
+    GPIO.output(STBY, GPIO.HIGH)  # Ensure motor driver is enabled
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
 
