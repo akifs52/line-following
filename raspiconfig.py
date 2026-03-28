@@ -132,15 +132,15 @@ try:
                 print(f"[ERROR] Invalid PWM value: {data}")
 
         # DIRECTION
-        elif data == "straight":
+        elif data == "straight" or data == "F":
             forward()
             apply_speed()
 
-        elif data == "left":
+        elif data == "left" or data == "L":
             left()
             apply_speed()
 
-        elif data == "right":
+        elif data == "right" or data == "R":
             right()
             apply_speed()
 
@@ -152,7 +152,7 @@ try:
             cross_right()
             apply_speed()
 
-        elif data == "stop":
+        elif data == "stop" or data == "S":
             stop()
 
 except KeyboardInterrupt:
