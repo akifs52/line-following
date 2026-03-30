@@ -14,7 +14,7 @@ PWMA = 12
 PWMB = 13
 AIN1 = 27
 AIN2 = 22
-BIN1 = 23
+BIN1 = 25
 BIN2 = 24
 STBY = 6
 
@@ -52,6 +52,13 @@ def forward():
     GPIO.output(BIN1, GPIO.HIGH)
     GPIO.output(BIN2, GPIO.LOW)
 
+def backward():
+    GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
+    GPIO.output(AIN1, GPIO.LOW)
+    GPIO.output(AIN2, GPIO.HIGH)
+    GPIO.output(BIN1, GPIO.LOW)
+    GPIO.output(BIN2, GPIO.HIGH)
+
 def left():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
     GPIO.output(AIN1, GPIO.LOW)
@@ -86,6 +93,56 @@ def apply_speed():
     pwmB.ChangeDutyCycle(speed)
 
 # =====================
+# COMMAND HANDLER
+# =====================
+def handle_command(data):
+    global speed, last_cmd_time
+    last_cmd_time = time.time()
+    print("[CMD]", data)
+
+    # SPEED (PWM format: PWM<value> where value is 0-255)
+    if data.startswith("PWM"):
+        try:
+            pwm_value = int(data[3:])  # Extract number after 'PWM'
+            speed = max(0, min(100, int((pwm_value / 255) * 100)))  # Convert 0-255 to 0-100%
+            apply_speed()
+            print(f"[MOTOR] Speed set to {speed}% (PWM: {pwm_value})")
+        except (ValueError, IndexError):
+            print(f"[ERROR] Invalid PWM value: {data}")
+        return
+
+    # DIRECTION
+    if data == "straight" or data == "F":
+        forward()
+        apply_speed()
+
+    elif data == "backward" or data == "B":
+        backward()
+        apply_speed()
+
+    elif data == "left" or data == "L":
+        left()
+        apply_speed()
+
+    elif data == "right" or data == "R":
+        right()
+        apply_speed()
+
+    elif data == "crossleft" or data == "CL":
+        cross_left()
+        apply_speed()
+
+    elif data == "crossright" or data == "CR":
+        cross_right()
+        apply_speed()
+
+    elif data == "stop" or data == "S":
+        stop()
+
+    else:
+        print(f"[WARNING] Unknown command: {data}")
+
+# =====================
 # FAILSAFE THREAD
 # =====================
 def failsafe_loop():
@@ -113,47 +170,18 @@ conn, addr = sock.accept()
 print("[CLIENT] Connected:", addr)
 
 try:
+    buffer = ""
     while True:
-        data = conn.recv(1024).decode().strip()
-        if not data:
+        chunk = conn.recv(1024)
+        if not chunk:
             continue
-
-        last_cmd_time = time.time()
-        print("[CMD]", data)
-
-        # SPEED (PWM format: PWM<value> where value is 0-255)
-        if data.startswith("PWM"):
-            try:
-                pwm_value = int(data[3:])  # Extract number after 'PWM'
-                speed = max(0, min(100, int((pwm_value / 255) * 100)))  # Convert 0-255 to 0-100%
-                apply_speed()
-                print(f"[MOTOR] Speed set to {speed}% (PWM: {pwm_value})")
-            except (ValueError, IndexError):
-                print(f"[ERROR] Invalid PWM value: {data}")
-
-        # DIRECTION
-        elif data == "straight" or data == "F":
-            forward()
-            apply_speed()
-
-        elif data == "left" or data == "L":
-            left()
-            apply_speed()
-
-        elif data == "right" or data == "R":
-            right()
-            apply_speed()
-
-        elif data == "crossleft":
-            cross_left()
-            apply_speed()
-
-        elif data == "crossright":
-            cross_right()
-            apply_speed()
-
-        elif data == "stop" or data == "S":
-            stop()
+        buffer += chunk.decode("utf-8", errors="ignore")
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            data = line.strip().replace("\x00", "")
+            if not data:
+                continue
+            handle_command(data)
 
 except KeyboardInterrupt:
     print("\n[EXIT] Cleaning GPIO")

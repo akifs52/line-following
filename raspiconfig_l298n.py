@@ -130,6 +130,50 @@ def apply_speed():
     pwmB.ChangeDutyCycle(speed)
 
 # =====================
+# COMMAND HANDLER
+# =====================
+def handle_command(data):
+    global speed, last_cmd_time
+    last_cmd_time = time.time()
+    print("[CMD]", data)
+
+    # SPEED (PWM format: PWM<value> where value is 0-255)
+    if data.startswith("PWM"):
+        try:
+            pwm_value = int(data[3:])  # Extract number after 'PWM'
+            speed = max(0, min(100, int((pwm_value / 255) * 100)))  # Convert 0-255 to 0-100%
+            apply_speed()
+            print(f"[MOTOR] Speed set to {speed}% (PWM: {pwm_value})")
+        except (ValueError, IndexError):
+            print(f"[ERROR] Invalid PWM value: {data}")
+        return
+
+    # DIRECTION (Single letter commands for compatibility)
+    if data == "straight" or data == "F":
+        forward()
+
+    elif data == "backward" or data == "B":
+        backward()
+
+    elif data == "left" or data == "L":
+        left()
+
+    elif data == "right" or data == "R":
+        right()
+
+    elif data == "crossleft" or data == "CL":
+        cross_left()
+
+    elif data == "crossright" or data == "CR":
+        cross_right()
+
+    elif data == "stop" or data == "S":
+        stop()
+
+    else:
+        print(f"[WARNING] Unknown command: {data}")
+
+# =====================
 # FAILSAFE THREAD
 # =====================
 def failsafe_loop():
@@ -162,45 +206,18 @@ conn, addr = sock.accept()
 print("[CLIENT] Connected:", addr)
 
 try:
+    buffer = ""
     while True:
-        data = conn.recv(1024).decode().strip()
-        if not data:
+        chunk = conn.recv(1024)
+        if not chunk:
             continue
-
-        last_cmd_time = time.time()
-        print("[CMD]", data)
-
-        # SPEED (PWM format: PWM<value> where value is 0-255)
-        if data.startswith("PWM"):
-            try:
-                pwm_value = int(data[3:])  # Extract number after 'PWM'
-                speed = max(0, min(100, int((pwm_value / 255) * 100)))  # Convert 0-255 to 0-100%
-                apply_speed()
-                print(f"[MOTOR] Speed set to {speed}% (PWM: {pwm_value})")
-            except (ValueError, IndexError):
-                print(f"[ERROR] Invalid PWM value: {data}")
-
-        # DIRECTION (Single letter commands for compatibility)
-        elif data == "straight" or data == "F":
-            forward()
-
-        elif data == "left" or data == "L":
-            left()
-
-        elif data == "right" or data == "R":
-            right()
-
-        elif data == "crossleft":
-            cross_left()
-
-        elif data == "crossright":
-            cross_right()
-
-        elif data == "stop" or data == "S":
-            stop()
-
-        else:
-            print(f"[WARNING] Unknown command: {data}")
+        buffer += chunk.decode("utf-8", errors="ignore")
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            data = line.strip().replace("\x00", "")
+            if not data:
+                continue
+            handle_command(data)
 
 except KeyboardInterrupt:
     print("\n[EXIT] Cleaning GPIO")
