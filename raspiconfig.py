@@ -34,9 +34,9 @@ pwmB.start(0)
 speed = 40           # default speed (%)
 last_cmd_time = time.time()
 TIMEOUT_SEC = 3.0
-INVERT_STEERING = True  # Swap left/right to match your 2-motor wiring
-INVERT_MOTOR_A = True   # If Motor A only spins in one direction, flip it
-INVERT_MOTOR_B = False
+INVERT_STEERING = False  # Swap left/right to match your 2-motor wiring
+INVERT_MOTOR_A = False   # If Motor A only spins in one direction, flip it
+INVERT_MOTOR_B = True
 MOTOR_A_SCALE = 1.0     # 0.0 - 1.2 (tweak to balance motors)
 MOTOR_B_SCALE = 1.0
 
