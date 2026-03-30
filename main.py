@@ -181,49 +181,46 @@ class MainWindow (QMainWindow):
     
     def eventFilter(self, obj, event):
         """Event filter to capture keyboard events for joystick only"""
-        if event.type() == QEvent.KeyPress:
+        if event.type() in (QEvent.KeyPress, QEvent.KeyRelease):
             if self.autonomous_mode:
                 return super().eventFilter(obj, event)
-                
-            key = event.text().upper()
-            print(f"Key pressed: {key}")  # Debug print
-            if key in self.wasd_pressed:
-                self.wasd_pressed[key] = True
-                print(f"WASD state updated: {self.wasd_pressed}")  # Debug print
-                
-                # Update QML joystick properties
-                if hasattr(self, 'joystick_root') and self.joystick_root:
-                    if key == 'W':
-                        self.joystick_root.setProperty("wPressed", True)
-                    elif key == 'A':
-                        self.joystick_root.setProperty("aPressed", True)
-                    elif key == 'S':
-                        self.joystick_root.setProperty("sPressed", True)
-                    elif key == 'D':
-                        self.joystick_root.setProperty("dPressed", True)
-                
-                return True  # Event handled
-                
-        elif event.type() == QEvent.KeyRelease:
-            key = event.text().upper()
-            print(f"Key released: {key}")  # Debug print
-            if key in self.wasd_pressed:
-                self.wasd_pressed[key] = False
-                print(f"WASD state updated: {self.wasd_pressed}")  # Debug print
-                
-                # Update QML joystick properties
-                if hasattr(self, 'joystick_root') and self.joystick_root:
-                    if key == 'W':
-                        self.joystick_root.setProperty("wPressed", False)
-                    elif key == 'A':
-                        self.joystick_root.setProperty("aPressed", False)
-                    elif key == 'S':
-                        self.joystick_root.setProperty("sPressed", False)
-                    elif key == 'D':
-                        self.joystick_root.setProperty("dPressed", False)
-                
-                return True  # Event handled
-                
+
+            # Ignore auto-repeat to prevent fake release/press spam
+            if event.isAutoRepeat():
+                return True
+
+            key_map = {
+                Qt.Key_W: "W",
+                Qt.Key_A: "A",
+                Qt.Key_S: "S",
+                Qt.Key_D: "D",
+            }
+            key = key_map.get(event.key())
+            if not key:
+                return super().eventFilter(obj, event)
+
+            is_press = (event.type() == QEvent.KeyPress)
+            if is_press:
+                print(f"Key pressed: {key}")  # Debug print
+            else:
+                print(f"Key released: {key}")  # Debug print
+
+            self.wasd_pressed[key] = is_press
+            print(f"WASD state updated: {self.wasd_pressed}")  # Debug print
+
+            # Update QML joystick properties
+            if hasattr(self, 'joystick_root') and self.joystick_root:
+                if key == 'W':
+                    self.joystick_root.setProperty("wPressed", is_press)
+                elif key == 'A':
+                    self.joystick_root.setProperty("aPressed", is_press)
+                elif key == 'S':
+                    self.joystick_root.setProperty("sPressed", is_press)
+                elif key == 'D':
+                    self.joystick_root.setProperty("dPressed", is_press)
+
+            return True  # Event handled
+
         return super().eventFilter(obj, event)
     
     def update_status_display(self):
