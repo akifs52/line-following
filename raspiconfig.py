@@ -34,6 +34,7 @@ pwmB.start(0)
 speed = 40           # default speed (%)
 last_cmd_time = time.time()
 TIMEOUT_SEC = 3.0
+INVERT_STEERING = True  # Swap left/right to match your 2-motor wiring
 
 # =====================
 # MOTOR FUNCTIONS
@@ -121,19 +122,19 @@ def handle_command(data):
         apply_speed()
 
     elif data == "left" or data == "L":
-        left()
+        (right() if INVERT_STEERING else left())
         apply_speed()
 
     elif data == "right" or data == "R":
-        right()
+        (left() if INVERT_STEERING else right())
         apply_speed()
 
     elif data == "crossleft" or data == "CL":
-        cross_left()
+        (cross_right() if INVERT_STEERING else cross_left())
         apply_speed()
 
     elif data == "crossright" or data == "CR":
-        cross_right()
+        (cross_left() if INVERT_STEERING else cross_right())
         apply_speed()
 
     elif data == "stop" or data == "S":
