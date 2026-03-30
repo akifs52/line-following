@@ -35,10 +35,32 @@ speed = 40           # default speed (%)
 last_cmd_time = time.time()
 TIMEOUT_SEC = 3.0
 INVERT_STEERING = True  # Swap left/right to match your 2-motor wiring
+INVERT_MOTOR_A = True   # If Motor A only spins in one direction, flip it
+INVERT_MOTOR_B = False
+MOTOR_A_SCALE = 1.0     # 0.0 - 1.2 (tweak to balance motors)
+MOTOR_B_SCALE = 1.0
 
 # =====================
 # MOTOR FUNCTIONS
 # =====================
+def _set_motor(in1, in2, forward):
+    if forward:
+        GPIO.output(in1, GPIO.HIGH)
+        GPIO.output(in2, GPIO.LOW)
+    else:
+        GPIO.output(in1, GPIO.LOW)
+        GPIO.output(in2, GPIO.HIGH)
+
+def _motor_a(forward):
+    if INVERT_MOTOR_A:
+        forward = not forward
+    _set_motor(AIN1, AIN2, forward)
+
+def _motor_b(forward):
+    if INVERT_MOTOR_B:
+        forward = not forward
+    _set_motor(BIN1, BIN2, forward)
+
 def stop():
     GPIO.output([AIN1, AIN2, BIN1, BIN2], GPIO.LOW)
     pwmA.ChangeDutyCycle(0)
@@ -48,50 +70,40 @@ def stop():
 
 def forward():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
+    _motor_a(True)
+    _motor_b(True)
 
 def backward():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.HIGH)
+    _motor_a(False)
+    _motor_b(False)
 
 def left():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
+    _motor_a(False)
+    _motor_b(True)
 
 def right():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.HIGH)
+    _motor_a(True)
+    _motor_b(False)
 
 def cross_left():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
+    _motor_a(False)
+    _motor_b(True)
 
 def cross_right():
     GPIO.output(STBY, GPIO.HIGH)  # Enable motor driver
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.HIGH)
+    _motor_a(True)
+    _motor_b(False)
 
 def apply_speed():
     GPIO.output(STBY, GPIO.HIGH)  # Ensure motor driver is enabled
-    pwmA.ChangeDutyCycle(speed)
-    pwmB.ChangeDutyCycle(speed)
+    duty_a = max(0, min(100, speed * MOTOR_A_SCALE))
+    duty_b = max(0, min(100, speed * MOTOR_B_SCALE))
+    pwmA.ChangeDutyCycle(duty_a)
+    pwmB.ChangeDutyCycle(duty_b)
 
 # =====================
 # COMMAND HANDLER

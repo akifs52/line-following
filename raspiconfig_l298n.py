@@ -60,10 +60,32 @@ speed = 40           # default speed (%)
 last_cmd_time = time.time()
 TIMEOUT_SEC = 3.0
 INVERT_STEERING = True  # Swap left/right to match your 2-motor wiring
+INVERT_MOTOR_A = True   # If Motor A only spins in one direction, flip it
+INVERT_MOTOR_B = False
+MOTOR_A_SCALE = 1.0     # 0.0 - 1.2 (tweak to balance motors)
+MOTOR_B_SCALE = 1.0
 
 # =====================
 # MOTOR FUNCTIONS
 # =====================
+def _set_motor(in1, in2, forward):
+    if forward:
+        GPIO.output(in1, GPIO.LOW)
+        GPIO.output(in2, GPIO.HIGH)
+    else:
+        GPIO.output(in1, GPIO.HIGH)
+        GPIO.output(in2, GPIO.LOW)
+
+def _motor_a(forward):
+    if INVERT_MOTOR_A:
+        forward = not forward
+    _set_motor(AIN1, AIN2, forward)
+
+def _motor_b(forward):
+    if INVERT_MOTOR_B:
+        forward = not forward
+    _set_motor(BIN1, BIN2, forward)
+
 def stop():
     """Stop all motors"""
     GPIO.output([AIN1, AIN2, BIN1, BIN2], GPIO.LOW)
@@ -73,62 +95,52 @@ def stop():
 
 def forward():
     """Move both motors forward"""
-    GPIO.output(AIN1, GPIO.LOW)   # Motor A: IN1=0, IN2=1 = Forward
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.LOW)   # Motor B: IN3=0, IN4=1 = Forward
-    GPIO.output(BIN2, GPIO.HIGH)
+    _motor_a(True)
+    _motor_b(True)
     apply_speed()
     print("[MOTOR] FORWARD")
 
 def backward():
     """Move both motors backward"""
-    GPIO.output(AIN1, GPIO.HIGH)  # Motor A: IN1=1, IN2=0 = Backward
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.HIGH)  # Motor B: IN3=1, IN4=0 = Backward
-    GPIO.output(BIN2, GPIO.LOW)
+    _motor_a(False)
+    _motor_b(False)
     apply_speed()
     print("[MOTOR] BACKWARD")
 
 def left():
     """Turn left (Motor A backward, Motor B forward)"""
-    GPIO.output(AIN1, GPIO.HIGH)  # Motor A: IN1=1, IN2=0 = Backward
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.LOW)   # Motor B: IN3=0, IN4=1 = Forward
-    GPIO.output(BIN2, GPIO.HIGH)
+    _motor_a(False)
+    _motor_b(True)
     apply_speed()
     print("[MOTOR] LEFT")
 
 def right():
     """Turn right (Motor A forward, Motor B backward)"""
-    GPIO.output(AIN1, GPIO.LOW)   # Motor A: IN1=0, IN2=1 = Forward
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.HIGH)  # Motor B: IN3=1, IN4=0 = Backward
-    GPIO.output(BIN2, GPIO.LOW)
+    _motor_a(True)
+    _motor_b(False)
     apply_speed()
     print("[MOTOR] RIGHT")
 
 def cross_left():
     """Cross left (sharp left turn)"""
-    GPIO.output(AIN1, GPIO.LOW)   # Motor A: IN1=0, IN2=1 = Forward
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.LOW)   # Motor B: IN3=0, IN4=1 = Forward
-    GPIO.output(BIN2, GPIO.HIGH)
+    _motor_a(True)
+    _motor_b(True)
     apply_speed()
     print("[MOTOR] CROSS_LEFT")
 
 def cross_right():
     """Cross right (sharp right turn)"""
-    GPIO.output(AIN1, GPIO.HIGH)  # Motor A: IN1=1, IN2=0 = Backward
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.HIGH)  # Motor B: IN3=1, IN4=0 = Backward
-    GPIO.output(BIN2, GPIO.LOW)
+    _motor_a(False)
+    _motor_b(False)
     apply_speed()
     print("[MOTOR] CROSS_RIGHT")
 
 def apply_speed():
     """Apply current speed to motors"""
-    pwmA.ChangeDutyCycle(speed)
-    pwmB.ChangeDutyCycle(speed)
+    duty_a = max(0, min(100, speed * MOTOR_A_SCALE))
+    duty_b = max(0, min(100, speed * MOTOR_B_SCALE))
+    pwmA.ChangeDutyCycle(duty_a)
+    pwmB.ChangeDutyCycle(duty_b)
 
 # =====================
 # COMMAND HANDLER
