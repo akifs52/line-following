@@ -10,6 +10,22 @@ import time
 import sys
 
 # =====================
+# L298N MOTOR DRIVER TRUTH TABLE
+# =====================
+# L298N Motor Direction Control
+# IN1  IN2  | Motor A Direction
+# 0    1    | Forward
+# 1    0    | Backward
+# 0    0    | Brake
+# 1    1    | Brake
+
+# IN3  IN4  | Motor B Direction
+# 0    1    | Forward
+# 1    0    | Backward
+# 0    0    | Brake
+# 1    1    | Brake
+
+# =====================
 # GPIO SETUP (Same as raspiconfig.py)
 # =====================
 GPIO.setmode(GPIO.BCM)
@@ -48,40 +64,40 @@ def stop():
 
 def forward(speed=50):
     """Move both motors forward"""
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
+    GPIO.output(AIN1, GPIO.LOW)   # Motor A: IN1=0, IN2=1 = Forward
+    GPIO.output(AIN2, GPIO.HIGH)
+    GPIO.output(BIN1, GPIO.LOW)   # Motor B: IN3=0, IN4=1 = Forward
+    GPIO.output(BIN2, GPIO.HIGH)
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR] FORWARD - Speed: {speed}%")
 
 def backward(speed=50):
     """Move both motors backward"""
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.HIGH)
+    GPIO.output(AIN1, GPIO.HIGH)  # Motor A: IN1=1, IN2=0 = Backward
+    GPIO.output(AIN2, GPIO.LOW)
+    GPIO.output(BIN1, GPIO.HIGH)  # Motor B: IN3=1, IN4=0 = Backward
+    GPIO.output(BIN2, GPIO.LOW)
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR] BACKWARD - Speed: {speed}%")
 
 def left(speed=50):
     """Turn left (Motor A backward, Motor B forward)"""
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.HIGH)
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
+    GPIO.output(AIN1, GPIO.HIGH)  # Motor A: IN1=1, IN2=0 = Backward
+    GPIO.output(AIN2, GPIO.LOW)
+    GPIO.output(BIN1, GPIO.LOW)   # Motor B: IN3=0, IN4=1 = Forward
+    GPIO.output(BIN2, GPIO.HIGH)
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR] LEFT - Speed: {speed}%")
 
 def right(speed=50):
     """Turn right (Motor A forward, Motor B backward)"""
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.HIGH)
+    GPIO.output(AIN1, GPIO.LOW)   # Motor A: IN1=0, IN2=1 = Forward
+    GPIO.output(AIN2, GPIO.HIGH)
+    GPIO.output(BIN1, GPIO.HIGH)  # Motor B: IN3=1, IN4=0 = Backward
+    GPIO.output(BIN2, GPIO.LOW)
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR] RIGHT - Speed: {speed}%")
@@ -92,8 +108,8 @@ def test_motor_a(speed=50):
     GPIO.output(BIN2, GPIO.LOW)
     pwmB.ChangeDutyCycle(0)
     
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
+    GPIO.output(AIN1, GPIO.LOW)   # Motor A: IN1=0, IN2=1 = Forward
+    GPIO.output(AIN2, GPIO.HIGH)
     pwmA.ChangeDutyCycle(speed)
     print(f"[MOTOR A] FORWARD - Speed: {speed}%")
 
@@ -103,8 +119,8 @@ def test_motor_b(speed=50):
     GPIO.output(AIN2, GPIO.LOW)
     pwmA.ChangeDutyCycle(0)
     
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
+    GPIO.output(BIN1, GPIO.LOW)   # Motor B: IN3=0, IN4=1 = Forward
+    GPIO.output(BIN2, GPIO.HIGH)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR B] FORWARD - Speed: {speed}%")
 
