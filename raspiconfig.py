@@ -12,7 +12,7 @@ GPIO.setwarnings(False)
 # New pin assignments
 PWMA = 12
 PWMB = 13
-AIN1 = 27
+AIN1 = 4
 AIN2 = 5
 BIN1 = 25
 BIN2 = 24

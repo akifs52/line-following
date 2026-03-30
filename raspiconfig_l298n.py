@@ -35,7 +35,7 @@ GPIO.setwarnings(False)
 # Pin assignments from raspiconfig.py (updated BIN1 to GPIO25)
 PWMA = 12    # Motor A PWM (L298N ENA)
 PWMB = 13    # Motor B PWM (L298N ENB)
-AIN1 = 27    # Motor A Input 1 (L298N IN1)
+AIN1 = 4    # Motor A Input 1 (L298N IN1)
 AIN2 = 5    # Motor A Input 2 (L298N IN2)
 BIN1 = 25    # Motor B Input 1 (L298N IN3) - Updated to GPIO25
 BIN2 = 24    # Motor B Input 2 (L298N IN4)
