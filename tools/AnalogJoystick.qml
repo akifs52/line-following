@@ -6,6 +6,7 @@ Item {
     id: root
     width: 190
     height: 190
+    clip: true
 
     scale: 1.04
     

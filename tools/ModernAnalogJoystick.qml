@@ -6,13 +6,59 @@ Rectangle {
     width: 192
     height: 192
     color: "#19243d"
+    
+    // Prevent keyboard focus stealing
+    focus: false
+    Keys.enabled: false
 
     property real xValue: 0
     property real yValue: 0
     property bool isActive: false
+    
+    // WASD state properties
+    property bool wPressed: false
+    property bool aPressed: false
+    property bool sPressed: false
+    property bool dPressed: false
 
     signal positionChanged(real x, real y)
     signal released()
+    
+    // Update joystick position based on WASD keys
+    onWPressedChanged: updateWASDPosition()
+    onAPressedChanged: updateWASDPosition()
+    onSPressedChanged: updateWASDPosition()
+    onDPressedChanged: updateWASDPosition()
+    
+    function updateWASDPosition() {
+        var maxDist = joystickContainer.width/2 - joystickHandle.width/2
+        var dx = 0
+        var dy = 0
+        
+        if (wPressed) dy = -maxDist
+        if (sPressed) dy = maxDist
+        if (aPressed) dx = -maxDist
+        if (dPressed) dx = maxDist
+        
+        // Update handle position
+        joystickHandle.anchors.centerIn = undefined
+        joystickHandle.x = joystickContainer.width/2 - joystickHandle.width/2 + dx
+        joystickHandle.y = joystickContainer.height/2 - joystickHandle.height/2 + dy
+        
+        // Update values
+        root.xValue = dx / maxDist
+        // Keep Y consistent with mouse: positive = up/forward
+        root.yValue = -dy / maxDist
+        root.positionChanged(root.xValue, root.yValue)
+        
+        // Update active state
+        root.isActive = (wPressed || aPressed || sPressed || dPressed)
+        
+        if (!root.isActive) {
+            root.positionChanged(0, 0)
+            root.released()
+        }
+    }
 
     Rectangle {
         id: joystickContainer
@@ -90,6 +136,10 @@ Rectangle {
                 id: mouseArea
                 anchors.fill: parent
                 hoverEnabled: true
+                
+                // Prevent keyboard focus stealing
+                focus: false
+                Keys.enabled: false
 
                 onPressed: {
                     root.isActive = true

@@ -2,14 +2,13 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton,
                               QStatusBar, QLineEdit, QVBoxLayout, QWidget, 
                               QMessageBox, QDialog, QVBoxLayout, QHBoxLayout)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QTimer, Qt, QUrl, QThread, Signal, QSize
-from PySide6.QtGui import QImage, QPixmap, QColor, QMovie
+from PySide6.QtCore import QFile, QTimer, Qt, QUrl, QThread, Signal, QSize, QEvent
+from PySide6.QtGui import QImage, QPixmap, QColor, QMovie, QKeySequence
 from PySide6.QtQuickWidgets import QQuickWidget
 import sys
 import torch
 import cv2
 import time
-import math
 import subprocess
 from ultralytics import YOLO
 from CamDetection import CameraThread, ObjectDetector, process_frame
@@ -54,6 +53,9 @@ class MainWindow (QMainWindow):
         self.cudaLabel: QLabel = self.ui.findChild(QLabel, "cudaLabel")
         self.vramLabel: QLabel = self.ui.findChild(QLabel, "vramLabel")
         self.fpsLabel: QLabel = self.ui.findChild(QLabel, "fpsLabel")
+        self.statusLabel: QLabel = self.ui.findChild(QLabel, "statusLabel")
+        self.statusDot: QLabel = self.ui.findChild(QLabel, "statusDot")
+        self.steeringStatusValue: QLabel = self.ui.findChild(QLabel, "steeringStatusValue")
         self.joystick_root = None
         
         if self.quickWidgetJoystick:
@@ -112,7 +114,7 @@ class MainWindow (QMainWindow):
         print ("[INFO] Using:", device)
       
         # Load model with verbose=False to reduce output
-        self.detector = ObjectDetector(model_path="best.pt", device=device)
+        self.detector = ObjectDetector(model_path="yolov8n.pt", device=device)
         self.device = device
         self.verbose = False  # Flag to control our own debug output
 
@@ -157,6 +159,129 @@ class MainWindow (QMainWindow):
         # Autonomous mode flag
         self.autonomous_mode = False
         self.otonoumBtn.clicked.connect(self.toggle_autonomous_mode)
+        
+        # Initialize status displays
+        self.steeringStatusValue.setText("INACTIVE")
+        self.steeringStatusValue.setStyleSheet("color: #FFFFFF; font-size: 10px; text-transform: uppercase;")
+        self.update_status_display()
+        
+        # Enable keyboard focus for WASD controls
+        self.setFocusPolicy(Qt.StrongFocus)
+        
+        # Install event filter to capture keyboard events before QML widgets
+        self.installEventFilter(self)
+        
+        # WASD key states
+        self.wasd_pressed = {'W': False, 'A': False, 'S': False, 'D': False}
+        
+        # Timer for continuous movement
+        self.wasd_timer = QTimer()
+        self.wasd_timer.timeout.connect(self.process_wasd_movement)
+        self.wasd_timer.start(50)  # 20Hz movement update
+    
+    def eventFilter(self, obj, event):
+        """Event filter to capture keyboard events for joystick only"""
+        if event.type() == QEvent.KeyPress:
+            if self.autonomous_mode:
+                return super().eventFilter(obj, event)
+                
+            key = event.text().upper()
+            print(f"Key pressed: {key}")  # Debug print
+            if key in self.wasd_pressed:
+                self.wasd_pressed[key] = True
+                print(f"WASD state updated: {self.wasd_pressed}")  # Debug print
+                
+                # Update QML joystick properties
+                if hasattr(self, 'joystick_root') and self.joystick_root:
+                    if key == 'W':
+                        self.joystick_root.setProperty("wPressed", True)
+                    elif key == 'A':
+                        self.joystick_root.setProperty("aPressed", True)
+                    elif key == 'S':
+                        self.joystick_root.setProperty("sPressed", True)
+                    elif key == 'D':
+                        self.joystick_root.setProperty("dPressed", True)
+                
+                return True  # Event handled
+                
+        elif event.type() == QEvent.KeyRelease:
+            key = event.text().upper()
+            print(f"Key released: {key}")  # Debug print
+            if key in self.wasd_pressed:
+                self.wasd_pressed[key] = False
+                print(f"WASD state updated: {self.wasd_pressed}")  # Debug print
+                
+                # Update QML joystick properties
+                if hasattr(self, 'joystick_root') and self.joystick_root:
+                    if key == 'W':
+                        self.joystick_root.setProperty("wPressed", False)
+                    elif key == 'A':
+                        self.joystick_root.setProperty("aPressed", False)
+                    elif key == 'S':
+                        self.joystick_root.setProperty("sPressed", False)
+                    elif key == 'D':
+                        self.joystick_root.setProperty("dPressed", False)
+                
+                return True  # Event handled
+                
+        return super().eventFilter(obj, event)
+    
+    def update_status_display(self):
+        """Update all status displays based on current system state"""
+        # Check camera and socket status
+        camera_ready = (hasattr(self, 'camera_thread') and 
+                    self.camera_thread and 
+                    self.camera_thread.isRunning())
+        
+        socket_ready = (hasattr(self, 'socket_client') and 
+                    self.socket_client and 
+                    self.socket_client.connected)
+        
+        # Update main status
+        if camera_ready and socket_ready:
+            self.statusLabel.setText("SYSTEM READY")
+            self.statusLabel.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 500;")
+            self.statusDot.setStyleSheet("background-color: #10B981; border-radius: 3px; min-width: 6px; min-height: 6px;")
+        else:
+            self.statusLabel.setText("SYSTEM WAITING")
+            self.statusLabel.setStyleSheet("color: #F59E0B; font-size: 12px; font-weight: 500;")
+            self.statusDot.setStyleSheet("background-color: #F59E0B; border-radius: 3px; min-width: 6px; min-height: 6px;")
+        
+        # Update steering status
+        print(f"DEBUG: autonomous_mode = {self.autonomous_mode}")  # Debug print
+        if not self.autonomous_mode:  # Manual mode = ACTIVE
+            print("DEBUG: Setting steering to ACTIVE")  # Debug print
+            self.steeringStatusValue.setText("ACTIVE")
+            self.steeringStatusValue.setStyleSheet("color: #10B981; font-size: 10px; text-transform: uppercase;")
+        else:  # Autonomous mode = INACTIVE
+            print("DEBUG: Setting steering to INACTIVE")  # Debug print
+            self.steeringStatusValue.setText("INACTIVE")
+            self.steeringStatusValue.setStyleSheet("color: #FFFFFF; font-size: 10px; text-transform: uppercase;")
+    
+    def process_wasd_movement(self):
+        """Process WASD movement when keys are pressed"""
+        if self.autonomous_mode:
+            return  # Disable WASD in autonomous mode
+            
+        if not hasattr(self, 'socket_client') or not self.socket_client:
+            return
+            
+        # Check which keys are pressed and send appropriate commands
+        if self.wasd_pressed['W']:
+            print("Sending command: F (Forward)")  # Debug print
+            self.socket_client.send_command("F")  # Forward
+        elif self.wasd_pressed['S']:
+            print("Sending command: B (Backward)")  # Debug print
+            self.socket_client.send_command("B")  # Backward
+        elif self.wasd_pressed['A']:
+            print("Sending command: L (Left)")  # Debug print
+            self.socket_client.send_command("L")  # Left
+        elif self.wasd_pressed['D']:
+            print("Sending command: R (Right)")  # Debug print
+            self.socket_client.send_command("R")  # Right
+        else:
+            print("Sending command: S (Stop)")  # Debug print
+            self.socket_client.send_command("S")  # Stop
     
     def show_loading_dialog(self, message):
         """Show a loading dialog with the given message"""
@@ -212,6 +337,9 @@ class MainWindow (QMainWindow):
                     self.socket_client and 
                     self.socket_client.connected)
         
+        # Update status display
+        self.update_status_display()
+        
         # If both are ready, start the timer and close loading dialog
         if camera_ready and socket_ready:
             self.close_loading_dialog()
@@ -251,7 +379,7 @@ class MainWindow (QMainWindow):
             ip = self.ipLineEdit.text()
             camport = self.camPortLine.text()
             raspiport = int(self.raspiPortLine.text())
-            fullipCam = f"http://" + ip + f":" + camport + f"/video"
+            fullipCam = "tcp://"+ ip + f":" + camport 
             
             # Show loading dialog
             self.show_loading_dialog("Kamera ve bağlantılar başlatılıyor...")
@@ -454,7 +582,9 @@ class MainWindow (QMainWindow):
             if hasattr(self, 'quickWidgetJoystick'):
                 self.quickWidgetJoystick.setEnabled(False)
             self.otonoumBtn.setStyleSheet("background-color: green; color: white;")
-           
+            # Clear WASD states when entering autonomous mode
+            for key in self.wasd_pressed:
+                self.wasd_pressed[key] = False
         else:
             # Enable manual control
             if hasattr(self, 'quickWidgetJoystick'):
@@ -465,26 +595,21 @@ class MainWindow (QMainWindow):
             if self.socket_client:
                 self.socket_client.send_command("S")
         
+        # Update status display
+        self.update_status_display()
+        
     
     def on_joystick_moved(self, x, y):
         """Handle joystick movement in manual mode"""
         if not self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
-            # Map joystick position to motor commands
-            if abs(x) < 0.1 and abs(y) < 0.1:
-                # Center position - stop
-                self.socket_client.send_command("S")
+            deadzone = 0.1
+            if abs(x) < deadzone and abs(y) < deadzone:
+                cmd = "S"
+            elif abs(y) >= abs(x):
+                cmd = "F" if y > 0 else "B"
             else:
-                # Calculate angle and speed
-                angle = math.atan2(y, x) * 180 / math.pi  # Convert to degrees
-                # Determine direction based on angle
-                if -45 <= angle < 45:  # Right
-                    self.socket_client.send_command(f"R")
-                elif 45 <= angle < 135:  # Forward
-                    self.socket_client.send_command(f"F")
-                elif -135 <= angle < -45:  # Backward
-                    self.socket_client.send_command(f"B")
-                else:  # Left
-                    self.socket_client.send_command(f"L")
+                cmd = "R" if x > 0 else "L"
+            self.socket_client.send_command(cmd)
     
     def on_joystick_released(self):
         """Handle joystick release - stop the vehicle"""
@@ -497,6 +622,10 @@ class MainWindow (QMainWindow):
 
         if hasattr(self, 'gpu_timer') and self.gpu_timer.isActive():
             self.gpu_timer.stop()
+            
+        # Stop WASD timer
+        if hasattr(self, 'wasd_timer') and self.wasd_timer.isActive():
+            self.wasd_timer.stop()
         
         # Close socket connection if exists
         if hasattr(self, 'socket_client') and self.socket_client:
