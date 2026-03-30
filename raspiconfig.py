@@ -13,7 +13,7 @@ GPIO.setwarnings(False)
 PWMA = 12
 PWMB = 13
 AIN1 = 27
-AIN2 = 22
+AIN2 = 5
 BIN1 = 25
 BIN2 = 24
 STBY = 6
