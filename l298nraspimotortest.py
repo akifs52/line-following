@@ -20,7 +20,7 @@ PWMA = 12    # Motor A PWM (L298N ENA)
 PWMB = 13    # Motor B PWM (L298N ENB)
 AIN1 = 27    # Motor A Input 1 (L298N IN1)
 AIN2 = 22    # Motor A Input 2 (L298N IN2)
-BIN1 = 23    # Motor B Input 1 (L298N IN3)
+BIN1 = 25    # Motor B Input 1 (L298N IN3)
 BIN2 = 24    # Motor B Input 2 (L298N IN4)
 STBY = 6     # Standby (Not used with L298N, but kept for compatibility)
 
