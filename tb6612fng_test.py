@@ -43,8 +43,8 @@ BIN2 = 24    # Motor B Input 2 (TB6612FNG BIN2)
 STBY = 6     # Standby (TB6612FNG STBY)
 
 # Motor direction inversion (fix for Motor A going backward)
-INVERT_MOTOR_A = True   # Set to True if Motor A spins backward when it should go forward
-INVERT_MOTOR_B = False  # Set to True if Motor B spins backward when it should go forward
+INVERT_MOTOR_A = False  # Motor A normal direction
+INVERT_MOTOR_B = True   # Motor B inverted direction
 
 # Setup all pins
 GPIO.setup([PWMA, PWMB, AIN1, AIN2, BIN1, BIN2, STBY], GPIO.OUT)
@@ -71,13 +71,17 @@ def _set_motor(in1, in2, forward):
         GPIO.output(in2, GPIO.LOW)
 
 def _motor_a(forward):
+    original_forward = forward
     if INVERT_MOTOR_A:
         forward = not forward
+    print(f"[DEBUG] Motor A: requested={original_forward}, inverted={forward}, INVERT_MOTOR_A={INVERT_MOTOR_A}")
     _set_motor(AIN1, AIN2, forward)
 
 def _motor_b(forward):
+    original_forward = forward
     if INVERT_MOTOR_B:
         forward = not forward
+    print(f"[DEBUG] Motor B: requested={original_forward}, inverted={forward}, INVERT_MOTOR_B={INVERT_MOTOR_B}")
     _set_motor(BIN1, BIN2, forward)
 
 def stop():
@@ -112,8 +116,8 @@ def backward(speed=50):
 def left(speed=50):
     """Turn left (Motor A backward, Motor B forward)"""
     GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
-    _motor_a(False)
-    _motor_b(True)
+    _motor_a(False)   # Motor A backward
+    _motor_b(True)    # Motor B forward
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR] LEFT - Speed: {speed}%")
@@ -121,8 +125,8 @@ def left(speed=50):
 def right(speed=50):
     """Turn right (Motor A forward, Motor B backward)"""
     GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
-    _motor_a(True)
-    _motor_b(False)
+    _motor_a(True)    # Motor A forward
+    _motor_b(False)   # Motor B backward
     pwmA.ChangeDutyCycle(speed)
     pwmB.ChangeDutyCycle(speed)
     print(f"[MOTOR] RIGHT - Speed: {speed}%")
