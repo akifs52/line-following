@@ -96,42 +96,32 @@ def forward():
     GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
     _motor_a(True)
     _motor_b(True)
-    print("[MOTOR] FORWARD")
+    # Don't apply speed here - let PWM command handle it
+    print("[MOTOR] Direction: FORWARD")
 
 def backward():
     """Move both motors backward"""
     GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
     _motor_a(False)
     _motor_b(False)
-    print("[MOTOR] BACKWARD")
+    # Don't apply speed here - let PWM command handle it
+    print("[MOTOR] Direction: BACKWARD")
 
 def left():
     """Turn left (Motor A backward, Motor B forward)"""
     GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
     _motor_a(False)
     _motor_b(True)
-    print("[MOTOR] LEFT")
+    # Don't apply speed here - let PWM command handle it
+    print("[MOTOR] Direction: LEFT")
 
 def right():
     """Turn right (Motor A forward, Motor B backward)"""
     GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
     _motor_a(True)
     _motor_b(False)
-    print("[MOTOR] RIGHT")
-
-def cross_left():
-    """Cross left (sharp left turn)"""
-    GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
-    _motor_a(False)
-    _motor_b(True)
-    print("[MOTOR] CROSS_LEFT")
-
-def cross_right():
-    """Cross right (sharp right turn)"""
-    GPIO.output(STBY, GPIO.HIGH)   # TB6612FNG: Enable motor driver
-    _motor_a(True)
-    _motor_b(False)
-    print("[MOTOR] CROSS_RIGHT")
+    # Don't apply speed here - let PWM command handle it
+    print("[MOTOR] Direction: RIGHT")
 
 def apply_speed():
     """Apply current speed to motors - only when called"""
@@ -177,14 +167,6 @@ def handle_command(data):
     elif data == "right" or data == "R":
         (left() if INVERT_STEERING else right())
         print("[MOTOR] Direction: RIGHT")
-
-    elif data == "crossleft" or data == "CL":
-        (cross_right() if INVERT_STEERING else cross_left())
-        print("[MOTOR] Direction: CROSS_LEFT")
-
-    elif data == "crossright" or data == "CR":
-        (cross_left() if INVERT_STEERING else cross_right())
-        print("[MOTOR] Direction: CROSS_RIGHT")
 
     elif data == "stop" or data == "S":
         stop()
