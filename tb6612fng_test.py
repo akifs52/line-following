@@ -42,6 +42,10 @@ BIN1 = 25    # Motor B Input 1 (TB6612FNG BIN1)
 BIN2 = 24    # Motor B Input 2 (TB6612FNG BIN2)
 STBY = 6     # Standby (TB6612FNG STBY)
 
+# Motor direction inversion (fix for Motor A going backward)
+INVERT_MOTOR_A = True   # Set to True if Motor A spins backward when it should go forward
+INVERT_MOTOR_B = False  # Set to True if Motor B spins backward when it should go forward
+
 # Setup all pins
 GPIO.setup([PWMA, PWMB, AIN1, AIN2, BIN1, BIN2, STBY], GPIO.OUT)
 
@@ -67,9 +71,13 @@ def _set_motor(in1, in2, forward):
         GPIO.output(in2, GPIO.LOW)
 
 def _motor_a(forward):
+    if INVERT_MOTOR_A:
+        forward = not forward
     _set_motor(AIN1, AIN2, forward)
 
 def _motor_b(forward):
+    if INVERT_MOTOR_B:
+        forward = not forward
     _set_motor(BIN1, BIN2, forward)
 
 def stop():
@@ -334,6 +342,9 @@ def main():
     print(f"  BIN1 (IN3)  -> GPIO{BIN1}")
     print(f"  BIN2 (IN4)  -> GPIO{BIN2}")
     print(f"  STBY       -> GPIO{STBY}")
+    print(f"\nMotor Direction Inversion:")
+    print(f"  Motor A: {'INVERTED' if INVERT_MOTOR_A else 'NORMAL'}")
+    print(f"  Motor B: {'INVERTED' if INVERT_MOTOR_B else 'NORMAL'}")
     print("\nTB6612FNG Connections:")
     print("  PWMA -> GPIO12 (Motor A PWM)")
     print("  PWMB -> GPIO13 (Motor B PWM)")
