@@ -35,7 +35,7 @@ GPIO.setwarnings(False)
 # Pin assignments from raspiconfig.py (updated BIN1 to GPIO25)
 PWMA = 12    # Motor A PWM (L298N ENA)
 PWMB = 13    # Motor B PWM (L298N ENB)
-AIN1 = 4    # Motor A Input 1 (L298N IN1)
+AIN1 = 5    # Motor A Input 1 (L298N IN1)
 AIN2 = 23    # Motor A Input 2 (L298N IN2)
 BIN1 = 25    # Motor B Input 1 (L298N IN3) - Updated to GPIO25
 BIN2 = 24    # Motor B Input 2 (L298N IN4)
@@ -108,17 +108,20 @@ def backward():
 
 def left():
     """Turn left (Motor A backward, Motor B forward)"""
-    _motor_a(False)
-    _motor_b(True)
-    apply_speed()
-    print("[MOTOR] LEFT")
-
-def right():
-    """Turn right (Motor A forward, Motor B backward)"""
     _motor_a(True)
     _motor_b(False)
     apply_speed()
+    print("[MOTOR] LEFT")
+   
+
+def right():
+
+    """Turn left (Motor A forward, Motor B backward)"""
+    _motor_a(False)
+    _motor_b(True)
+    apply_speed()
     print("[MOTOR] RIGHT")
+    
 
 def cross_left():
     """Cross left (sharp left turn)"""
