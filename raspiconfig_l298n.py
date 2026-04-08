@@ -39,7 +39,6 @@ AIN1 = 4    # Motor A Input 1 (L298N IN1)
 AIN2 = 23    # Motor A Input 2 (L298N IN2)
 BIN1 = 25    # Motor B Input 1 (L298N IN3) - Updated to GPIO25
 BIN2 = 24    # Motor B Input 2 (L298N IN4)
-STBY = 6     # Standby (Not used with L298N, but kept for compatibility)
 
 # Setup all pins
 GPIO.setup([PWMA, PWMB, AIN1, AIN2, BIN1, BIN2, STBY], GPIO.OUT)
