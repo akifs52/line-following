@@ -36,7 +36,7 @@ GPIO.setwarnings(False)
 PWMA = 12    # Motor A PWM (L298N ENA)
 PWMB = 13    # Motor B PWM (L298N ENB)
 AIN1 = 4    # Motor A Input 1 (L298N IN1)
-AIN2 = 5    # Motor A Input 2 (L298N IN2)
+AIN2 = 23    # Motor A Input 2 (L298N IN2)
 BIN1 = 25    # Motor B Input 1 (L298N IN3) - Updated to GPIO25
 BIN2 = 24    # Motor B Input 2 (L298N IN4)
 STBY = 6     # Standby (Not used with L298N, but kept for compatibility)
@@ -61,7 +61,7 @@ last_cmd_time = time.time()
 TIMEOUT_SEC = 3.0
 INVERT_STEERING = False  # Swap left/right to match your 2-motor wiring
 INVERT_MOTOR_A = False   # If Motor A only spins in one direction, flip it
-INVERT_MOTOR_B = True
+INVERT_MOTOR_B = False
 MOTOR_A_SCALE = 1.0     # 0.0 - 1.2 (tweak to balance motors)
 MOTOR_B_SCALE = 1.0
 
