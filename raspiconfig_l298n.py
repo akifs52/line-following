@@ -213,7 +213,7 @@ print("[L298N] Motor driver initialized")
 print(f"[GPIO] PWMA={PWMA}, PWMB={PWMB}")
 print(f"[GPIO] AIN1={AIN1}, AIN2={AIN2}")
 print(f"[GPIO] BIN1={BIN1}, BIN2={BIN2}")
-print(f"[GPIO] STBY={STBY}")
+
 
 threading.Thread(target=failsafe_loop, daemon=True).start()
 
