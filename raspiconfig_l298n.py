@@ -41,7 +41,7 @@ BIN1 = 25    # Motor B Input 1 (L298N IN3) - Updated to GPIO25
 BIN2 = 24    # Motor B Input 2 (L298N IN4)
 
 # Setup all pins
-GPIO.setup([PWMA, PWMB, AIN1, AIN2, BIN1, BIN2, STBY], GPIO.OUT)
+GPIO.setup([PWMA, PWMB, AIN1, AIN2, BIN1, BIN2], GPIO.OUT)
 
 # PWM setup
 pwm_freq = 1000  # 1kHz frequency
