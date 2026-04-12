@@ -1,0 +1,20 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/MaterialIcons-Regular.ttf</file>
+        <file>icons/MaterialSymbolsOutlined.ttf</file>
+        <file>icons/Line-following robot app icon.png</file>
+        <file>icons/Inter-Bold.ttf</file>
+        <file>icons/Inter-Regular.ttf</file>
+        <file>icons/Inter-Variable.ttf</file>
+        <file>icons/Roboto-Bold.ttf</file>
+        <file>icons/Roboto-Regular.ttf</file>
+        <file>icons/SpaceGrotesk-Bold.ttf</file>
+        <file>icons/SpaceGrotesk-Regular.ttf</file>
+    </qresource>
+    <qresource prefix="/qml">
+        <file>qml/Joystick.qml</file>
+        <file>qml/Main.qml</file>
+        <file>qml/ModernButton.qml</file>
+        <file>qml/MotorSpeedController.qml</file>
+    </qresource>
+</RCC>
