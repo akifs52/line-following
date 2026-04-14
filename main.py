@@ -8,6 +8,7 @@ from PySide6.QtQuickWidgets import QQuickWidget
 import sys
 import torch
 import cv2
+import numpy as np
 import time
 import subprocess
 from ultralytics import YOLO
@@ -19,8 +20,6 @@ LABEL_TO_CMD = {
             "left": "L",
             "right": "R",
             "straight": "F",
-            "crossleft": "CL",
-            "crossright": "CR",
         }
 
 class MainWindow (QMainWindow):
@@ -57,6 +56,8 @@ class MainWindow (QMainWindow):
         self.statusDot: QLabel = self.ui.findChild(QLabel, "statusDot")
         self.steeringStatusValue: QLabel = self.ui.findChild(QLabel, "steeringStatusValue")
         self.joystick_root = None
+        self.joystick_active = False  # Track if joystick is being held
+        self.last_command_time = 0
         
         if self.quickWidgetJoystick:
             try:
@@ -159,6 +160,30 @@ class MainWindow (QMainWindow):
         # Autonomous mode flag
         self.autonomous_mode = False
         self.otonoumBtn.clicked.connect(self.toggle_autonomous_mode)
+        
+        # ── PID Otonom Sürüş Parametreleri (PC tarafında hesaplanır) ──
+        self.pid_kp = 0.45
+        self.pid_ki = 0.005
+        self.pid_kd = 0.25
+        self.pid_integral_limit = 100.0
+        self.pid_prev_error = 0.0
+        self.pid_integral = 0.0
+        self.pid_last_time = time.time()
+        
+        # Motor hızları (otonom mod)
+        self.auto_base_speed = 40
+        self.auto_min_speed = 15
+        self.auto_max_speed = 75
+        
+        # ROI – sadece alt kısma odaklan
+        self.roi_top_ratio = 0.40
+        self.roi_bottom_ratio = 1.0
+        
+        # Yol kaybolma
+        self.last_line_seen = time.time()
+        self.no_line_timeout = 1.0
+        self.search_turn_speed = 30
+        self.search_dir = "left"
         
         # Initialize status displays
         self.steeringStatusValue.setText("INACTIVE")
@@ -406,77 +431,243 @@ class MainWindow (QMainWindow):
             self.close_loading_dialog()
             QMessageBox.critical(self, "Hata", f"Başlatma hatası: {str(e)}")
     
+    # ─── PID Hesaplama ────────────────────────────────────────
+    def pid_compute(self, error):
+        """PID hesapla → (output, p, i, d)"""
+        now = time.time()
+        dt = now - self.pid_last_time
+        if dt <= 0:
+            dt = 0.01
+        self.pid_last_time = now
+
+        p = self.pid_kp * error
+
+        self.pid_integral += error * dt
+        self.pid_integral = max(-self.pid_integral_limit,
+                                min(self.pid_integral_limit, self.pid_integral))
+        i = self.pid_ki * self.pid_integral
+
+        derivative = (error - self.pid_prev_error) / dt
+        d = self.pid_kd * derivative
+        self.pid_prev_error = error
+
+        return p + i + d, p, i, d
+
+    def pid_reset(self):
+        """PID durumunu sıfırla"""
+        self.pid_prev_error = 0.0
+        self.pid_integral = 0.0
+        self.pid_last_time = time.time()
+
+    # ─── Segment Maskesinden Yol Merkezi ──────────────────────
+    def find_line_center(self, masks, frame_shape):
+        """
+        YOLO segment maskesinden yolun ağırlık merkezini bul.
+        Dönüş: (cx, cy, mask_binary)  veya  (None, None, None)
+        """
+        if masks is None or len(masks.data) == 0:
+            return None, None, None
+
+        h, w = frame_shape[:2]
+        best_mask = None
+        best_area = 0
+
+        for mask_tensor in masks.data:
+            mask_np = mask_tensor.cpu().numpy()
+            mask_resized = cv2.resize(mask_np, (w, h),
+                                      interpolation=cv2.INTER_NEAREST)
+            mask_binary = (mask_resized > 0.5).astype(np.uint8)
+            area = np.sum(mask_binary)
+            if area > best_area:
+                best_area = area
+                best_mask = mask_binary
+
+        if best_mask is None or best_area < 50:
+            return None, None, None
+
+        # ROI uygula
+        roi_top = int(h * self.roi_top_ratio)
+        roi_bottom = int(h * self.roi_bottom_ratio)
+        roi_mask = best_mask.copy()
+        roi_mask[:roi_top, :] = 0
+        roi_mask[roi_bottom:, :] = 0
+
+        if np.sum(roi_mask) < 30:
+            return None, None, None
+
+        M = cv2.moments(roi_mask, binaryImage=True)
+        if M["m00"] == 0:
+            return None, None, None
+
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+        return cx, cy, best_mask
+
+    def get_multi_row_centers(self, mask, frame_shape, num_rows=5):
+        """Maskeyi yatay dilimlere böl → eğim/curvature tahmini"""
+        if mask is None:
+            return []
+        h, w = frame_shape[:2]
+        roi_top = int(h * self.roi_top_ratio)
+        roi_bottom = int(h * self.roi_bottom_ratio)
+        roi_height = roi_bottom - roi_top
+        if roi_height <= 0:
+            return []
+        row_height = roi_height // num_rows
+        centers = []
+        for i in range(num_rows):
+            y_start = roi_top + i * row_height
+            y_end = y_start + row_height
+            row_slice = mask[y_start:y_end, :]
+            if np.sum(row_slice) < 10:
+                continue
+            M = cv2.moments(row_slice, binaryImage=True)
+            if M["m00"] == 0:
+                continue
+            cx = int(M["m10"] / M["m00"])
+            cy = y_start + row_height // 2
+            centers.append((cx, cy))
+        return centers
+
+    # ─── Görüntü İşleme + Otonom/Manuel ───────────────────────
     def on_frame_received(self, frame):
         """Handle frame received from camera thread"""
         try:
-            
             # Save frame using frame_saver
-            # self.frame_saver.try_save(frame)
+            self.frame_saver.try_save(frame)
 
             # Process frame with object detection
             processed_frame, fps, _, _, results = process_frame(
-                frame, 
+                frame,
                 self.detector,
                 frame_counter=0,
                 show_fps=True
             )
 
+            h, w = frame.shape[:2]
+            center_x = w // 2
+
+            # ── Otonom Mod: YOLO + PID → DIFF komutu gönder ──
+            if self.autonomous_mode and results is not None:
+                masks = results.masks if hasattr(results, 'masks') and results.masks is not None else None
+                boxes = results.boxes if hasattr(results, 'boxes') and results.boxes is not None else None
+
+                cx, cy, mask_vis = self.find_line_center(masks, frame.shape)
+
+                # Fallback: bbox'tan merkez
+                if cx is None and boxes is not None and len(boxes) > 0:
+                    best_conf = 0
+                    best_box = None
+                    for box in boxes:
+                        conf = box.conf.item()
+                        if conf > best_conf:
+                            best_conf = conf
+                            best_box = box
+                    if best_box is not None:
+                        if best_box.xywhn is not None and len(best_box.xywhn) > 0:
+                            xn, yn, wn, hn = best_box.xywhn[0].cpu().numpy()
+                            cx = int(xn * w)
+                            cy = int(yn * h)
+                        else:
+                            x1, y1, x2, y2 = map(int, best_box.xyxy[0].cpu().numpy())
+                            cx = (x1 + x2) // 2
+                            cy = (y1 + y2) // 2
+                        mask_vis = None
+
+                if cx is not None:
+                    # Yol bulundu
+                    self.last_line_seen = time.time()
+                    error = (cx - center_x) / (w / 2)
+
+                    # Eğim analizi (anticipatory steering)
+                    if mask_vis is not None:
+                        row_centers = self.get_multi_row_centers(mask_vis, frame.shape, 5)
+                        if len(row_centers) >= 3:
+                            curvature = (row_centers[-1][0] - row_centers[0][0]) / w
+                            error += curvature * 0.15
+
+                    pid_out, p_val, i_val, d_val = self.pid_compute(error)
+                    pid_out = max(-100, min(100, pid_out))
+
+                    speed_l = self.auto_base_speed - pid_out
+                    speed_r = self.auto_base_speed + pid_out
+                    speed_l = max(-self.auto_max_speed, min(self.auto_max_speed, speed_l))
+                    speed_r = max(-self.auto_max_speed, min(self.auto_max_speed, speed_r))
+
+                    if 0 < abs(speed_l) < self.auto_min_speed:
+                        speed_l = self.auto_min_speed if speed_l > 0 else -self.auto_min_speed
+                    if 0 < abs(speed_r) < self.auto_min_speed:
+                        speed_r = self.auto_min_speed if speed_r > 0 else -self.auto_min_speed
+
+                    # Arama yönünü güncelle
+                    if error > 0.1:
+                        self.search_dir = "right"
+                    elif error < -0.1:
+                        self.search_dir = "left"
+
+                    # Pi'ye DIFF komutu gönder
+                    if self.socket_client and self.socket_client.connected:
+                        self.socket_client.send_command(f"DIFF,{speed_l:.1f},{speed_r:.1f}")
+
+                    # Debug overlay çiz
+                    cv2.circle(processed_frame, (cx, cy), 10, (0, 0, 255), -1)
+                    cv2.line(processed_frame, (center_x, cy), (cx, cy), (0, 0, 255), 2)
+                    cv2.putText(processed_frame, f"PID:{pid_out:+.1f} L:{speed_l:.0f} R:{speed_r:.0f}",
+                                (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+                else:
+                    # Yol kayıp → arama modunda
+                    elapsed = time.time() - self.last_line_seen
+                    if self.socket_client and self.socket_client.connected:
+                        if elapsed < self.no_line_timeout:
+                            self.socket_client.send_command(f"DIFF,{self.auto_min_speed},{self.auto_min_speed}")
+                        elif elapsed < self.no_line_timeout * 3:
+                            if self.search_dir == "left":
+                                self.socket_client.send_command(f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}")
+                            else:
+                                self.socket_client.send_command(f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}")
+                        else:
+                            self.socket_client.send_command("S")
+
+                    cv2.putText(processed_frame, "ARAMA MODU",
+                                (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+                # ROI çizgisi
+                roi_y = int(h * self.roi_top_ratio)
+                cv2.line(processed_frame, (0, roi_y), (w, roi_y), (255, 255, 0), 1)
+                # Merkez çizgisi
+                cv2.line(processed_frame, (center_x, roi_y), (center_x, h), (0, 165, 255), 1)
+
+            elif self.autonomous_mode and results is None:
+                # Otonom ama algılama yok
+                if self.socket_client and self.socket_client.connected:
+                    self.socket_client.send_command("S")
+
             # Update FPS display
-            gpu_text = f"{self.gpu_util_percent:.0f}%" if self.gpu_util_percent is not None else "--%"
             gpu_memory_percent = f"{self.vram_usage_percent:.0f}%" if self.vram_usage_percent is not None else "--%"
+            mode_text = "AUTO" if self.autonomous_mode else "MANUAL"
             if fps > 0:
-                self.fpsLabel.setText(f"FPS: {fps:.0f} | Mode: {'AUTO' if self.autonomous_mode else 'MANUAL'} | VRAM: {gpu_memory_percent}")
+                self.fpsLabel.setText(f"FPS: {fps:.0f} | Mode: {mode_text} | VRAM: {gpu_memory_percent}")
                 self.fpsLabel.setStyleSheet("color: #10B981; border-radius: 4px;")
             else:
-                self.fpsLabel.setText("FPS: -- | Mode: MANUAL | VRAM: --%")
+                self.fpsLabel.setText(f"FPS: -- | Mode: {mode_text} | VRAM: --%")
                 self.fpsLabel.setStyleSheet("color: #6B7280; border-radius: 4px;")
 
             # Convert frame to QImage
             h, w, ch = processed_frame.shape
             bytes_per_line = ch * w
             qt_image = QImage(processed_frame.data, w, h, bytes_per_line, QImage.Format_BGR888)
-            
-           
-            
-            
+
             # Display image
             self.CamLabel.setPixmap(QPixmap.fromImage(qt_image).scaled(
-                self.CamLabel.size(), 
-                Qt.KeepAspectRatio, 
+                self.CamLabel.size(),
+                Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             ))
 
-            # Handle detection results
-            if results is not None and hasattr(results, 'boxes') and len(results.boxes) > 0:
-                # Find the detection with highest confidence
-                best_conf = 0
-                best_label = None
-                
-                for box in results.boxes:
-                    conf = box.conf.item()
-                    if conf > best_conf:
-                        best_conf = conf
-                        best_label = self.detector.names.get(int(box.cls.item()), "unknown")
-
-                # Process the best detection
-                if best_label and best_label != self.last_label:
-                    self.last_label = best_label
-                    if self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
-                        command = LABEL_TO_CMD.get(best_label, "S")  # Default to stop if label not in mapping
-                        self.socket_client.send_command(command)
-            else:
-                # No detections - send stop if we were tracking a label
-                if self.last_label != "stop":
-                    self.last_label = "stop"
-                    if self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
-                        self.socket_client.send_command("S")
-
-            # No statusbar update needed - FPS label shows the same info
-                
         except Exception as e:
             print(f"Error in on_frame_received: {str(e)}")
-            # Optionally show error in status bar
-            
+
 
     def update_gpu_stats(self):
         """Update GPU utilization + VRAM usage every second."""
@@ -554,10 +745,9 @@ class MainWindow (QMainWindow):
     
 
     def on_slider_changed(self):
-
-        
+        """Handle circular slider changes - only sends PWM speed commands"""
         v = int(self.rootSlider1.property("value"))
-
+        
         # Update slider color based on value
         if v < 85:
             self.rootSlider1.setProperty("progressColor", QColor("#ff5252"))
@@ -566,15 +756,22 @@ class MainWindow (QMainWindow):
         else:
             self.rootSlider1.setProperty("progressColor", QColor("#66bb6a"))
             
-        # Send PWM value through socket if connected
+        # Send ONLY PWM value through socket if connected
+        # This slider should NOT send movement commands, only speed
         if hasattr(self, 'socket_client') and self.socket_client and self.socket_client.connected:
             # Send value in format "PWM{value}" where value is 0-255
             self.socket_client.send_command(f"PWM{v}")
+            print(f"[SLIDER] Speed changed to PWM{v} ({int(v/255*100)}%)")
 
     def toggle_autonomous_mode(self):
-        """Toggle autonomous mode and update button text"""
+        """Toggle autonomous mode (PID runs on PC, DIFF commands sent to Pi)"""
         self.autonomous_mode = not self.autonomous_mode
+        
         if self.autonomous_mode:
+            # Otonom başlıyor → PID sıfırla
+            self.pid_reset()
+            self.last_line_seen = time.time()
+            
             # Disable manual control when in autonomous mode
             if hasattr(self, 'quickWidgetJoystick'):
                 self.quickWidgetJoystick.setEnabled(False)
@@ -582,15 +779,17 @@ class MainWindow (QMainWindow):
             # Clear WASD states when entering autonomous mode
             for key in self.wasd_pressed:
                 self.wasd_pressed[key] = False
+            print("[MOD] ═══ OTONOM BAŞLADI (PID on PC) ═══")
         else:
+            # Manuel moda dön → dur
+            if hasattr(self, 'socket_client') and self.socket_client and self.socket_client.connected:
+                self.socket_client.send_command("S")
+            
             # Enable manual control
             if hasattr(self, 'quickWidgetJoystick'):
                 self.quickWidgetJoystick.setEnabled(True)
             self.otonoumBtn.setStyleSheet("")
-            
-            # Send stop command when switching to manual mode
-            if self.socket_client:
-                self.socket_client.send_command("S")
+            print("[MOD] ═══ MANUEL MODA GEÇİLDİ ═══")
         
         # Update status display
         self.update_status_display()
@@ -598,20 +797,40 @@ class MainWindow (QMainWindow):
     
     def on_joystick_moved(self, x, y):
         """Handle joystick movement in manual mode"""
+        import time
+        current_time = time.time()
+        
         if not self.autonomous_mode and hasattr(self, 'socket_client') and self.socket_client:
             deadzone = 0.1
+            
+            # Check if joystick is in deadzone
             if abs(x) < deadzone and abs(y) < deadzone:
-                cmd = "S"
-            elif abs(y) >= abs(x):
-                cmd = "F" if y > 0 else "B"
+                if self.joystick_active:  # Only send stop if joystick was previously active
+                    cmd = "S"
+                    self.socket_client.send_command(cmd)
+                    print(f"[JOYSTICK] Entering deadzone, sending: {cmd}")
+                self.joystick_active = False
             else:
-                cmd = "R" if x > 0 else "L"
-            self.socket_client.send_command(cmd)
+                # Joystick is outside deadzone
+                if abs(y) >= abs(x):
+                    cmd = "F" if y > 0 else "B"
+                else:
+                    cmd = "R" if x > 0 else "L"
+                
+                # Only send command if it's different or enough time has passed
+                if not self.joystick_active or (current_time - self.last_command_time > 0.1):
+                    self.socket_client.send_command(cmd)
+                    print(f"[JOYSTICK] Movement: {cmd} (x={x:.2f}, y={y:.2f})")
+                    self.last_command_time = current_time
+                
+                self.joystick_active = True
     
     def on_joystick_released(self):
         """Handle joystick release - stop the vehicle"""
         if hasattr(self, 'socket_client') and self.socket_client:
             self.socket_client.send_command("S")
+            self.joystick_active = False
+            print("[JOYSTICK] Released, sending STOP")
     
     def closeEvent(self, event):
         # Close camera thread if running
