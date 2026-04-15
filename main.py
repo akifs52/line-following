@@ -46,7 +46,10 @@ class MainWindow (QMainWindow):
         self.raspiPortLine : QLineEdit = self.ui.findChild(QLineEdit, "raspiPortLine")
         self.quickWidgetSlider1 = self.ui.findChild(QQuickWidget, "quickWidgetSlider1")
         self.quickWidgetJoystick = self.ui.findChild(QQuickWidget, "quickWidgetJoystick")
+        self.settingsButton: QPushButton = self.ui.findChild(QPushButton, "settingsButton")
         
+        # Son frame'i saklamak için (kaydetme butonu için)
+        self.current_frame = None
         
         # Footer frame içindeki label'lar
         self.cudaLabel: QLabel = self.ui.findChild(QLabel, "cudaLabel")
@@ -115,7 +118,7 @@ class MainWindow (QMainWindow):
         print ("[INFO] Using:", device)
       
         # Load model with verbose=False to reduce output
-        self.detector = ObjectDetector(model_path="yolov8n.pt", device=device)
+        self.detector = ObjectDetector(model_path="lines.pt", device=device)
         self.device = device
         self.verbose = False  # Flag to control our own debug output
 
@@ -157,15 +160,20 @@ class MainWindow (QMainWindow):
 
         self.closeCam.clicked.connect(self.closeEvent)
         
+        # Settings button -> frame capture
+        if self.settingsButton:
+            self.settingsButton.clicked.connect(self.capture_frame)
+        
         # Autonomous mode flag
         self.autonomous_mode = False
         self.otonoumBtn.clicked.connect(self.toggle_autonomous_mode)
         
-        # ── PID Otonom Sürüş Parametreleri (PC tarafında hesaplanır) ──
-        self.pid_kp = 0.45
-        self.pid_ki = 0.005
-        self.pid_kd = 0.25
-        self.pid_integral_limit = 100.0
+        # ── Dual-Line PID Otonom Sürüş Parametreleri ──
+        # Error [-1,+1] → Motor [-100,+100] arası anlamlı fark üretmeli
+        self.pid_kp = 40.0          # Ana dönüş kuvveti (error=0.7 → P=28)
+        self.pid_ki = 0.1           # Kalıcı offset düzeltme
+        self.pid_kd = 12.0          # Sarsıntı sönümleme
+        self.pid_integral_limit = 50.0
         self.pid_prev_error = 0.0
         self.pid_integral = 0.0
         self.pid_last_time = time.time()
@@ -173,17 +181,27 @@ class MainWindow (QMainWindow):
         # Motor hızları (otonom mod)
         self.auto_base_speed = 40
         self.auto_min_speed = 15
-        self.auto_max_speed = 75
+        self.auto_max_speed = 70
+        self.smoothed_speed = self.auto_base_speed
         
-        # ROI – sadece alt kısma odaklan
-        self.roi_top_ratio = 0.40
+        # ROI – Label analizi: center_y avg=0.78, range 0.59-0.90
+        self.roi_top_ratio = 0.55
         self.roi_bottom_ratio = 1.0
         
-        # Yol kaybolma
+        # ── Adaptive Road Width Tracking ──
+        self.estimated_half_road_width = None   # Piksel — 2 çizgiden öğrenilir
+        self.road_width_alpha = 0.1             # EMA katsayısı
+        self.default_half_road_pct = 0.20       # Fallback: frame_width * 0.20
+        
+        # Yol kaybolma & Arama modu
         self.last_line_seen = time.time()
-        self.no_line_timeout = 1.0
-        self.search_turn_speed = 30
+        self.no_line_timeout = 0.8
+        self.search_turn_speed = 25
         self.search_dir = "left"
+        self.last_seen_line_side = None  # "left" / "right" / "both"
+        
+        # Komut tekrarı önleme
+        self.last_sent_cmd = None
         
         # Initialize status displays
         self.steeringStatusValue.setText("INACTIVE")
@@ -459,82 +477,199 @@ class MainWindow (QMainWindow):
         self.pid_integral = 0.0
         self.pid_last_time = time.time()
 
-    # ─── Segment Maskesinden Yol Merkezi ──────────────────────
-    def find_line_center(self, masks, frame_shape):
+    # ─── Dual-Line: Tüm Çizgi Merkezlerini Bul ─────────────────
+    def find_line_centers(self, masks, boxes, frame_shape):
         """
-        YOLO segment maskesinden yolun ağırlık merkezini bul.
-        Dönüş: (cx, cy, mask_binary)  veya  (None, None, None)
+        YOLO'dan gelen tüm 'line' maskelerini ayrı ayrı işle.
+        Her maskenin ROI bölgesindeki x-center'ını bul.
+        
+        Return: [(cx1, cy1, mask1), (cx2, cy2, mask2), ...]
+                Sol → Sağ sıralı (cx'e göre)
+                Boş liste → hiçbir çizgi bulunamadı
         """
         if masks is None or len(masks.data) == 0:
-            return None, None, None
+            return []
 
         h, w = frame_shape[:2]
-        best_mask = None
-        best_area = 0
-
-        for mask_tensor in masks.data:
+        roi_top = int(h * self.roi_top_ratio)
+        roi_bottom = int(h * self.roi_bottom_ratio)
+        
+        line_data = []
+        
+        for idx, mask_tensor in enumerate(masks.data):
+            # Güven kontrolü — eşleşen box varsa conf kontrol et
+            if boxes is not None and idx < len(boxes):
+                conf = boxes[idx].conf.item()
+                if conf < 0.40:
+                    continue
+            
             mask_np = mask_tensor.cpu().numpy()
             mask_resized = cv2.resize(mask_np, (w, h),
                                       interpolation=cv2.INTER_NEAREST)
             mask_binary = (mask_resized > 0.5).astype(np.uint8)
-            area = np.sum(mask_binary)
-            if area > best_area:
-                best_area = area
-                best_mask = mask_binary
+            
+            # Genel alan kontrolü
+            if np.sum(mask_binary) < 50:
+                continue
+            
+            # ROI uygula
+            roi_mask = mask_binary.copy()
+            roi_mask[:roi_top, :] = 0
+            roi_mask[roi_bottom:, :] = 0
+            
+            if np.sum(roi_mask) < 30:
+                continue
+            
+            M = cv2.moments(roi_mask, binaryImage=True)
+            if M["m00"] == 0:
+                continue
+            
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            line_data.append((cx, cy, mask_binary))
+        
+        # Sol → Sağ sırala (cx'e göre)
+        line_data.sort(key=lambda item: item[0])
+        return line_data
 
-        if best_mask is None or best_area < 50:
-            return None, None, None
-
-        # ROI uygula
-        roi_top = int(h * self.roi_top_ratio)
-        roi_bottom = int(h * self.roi_bottom_ratio)
-        roi_mask = best_mask.copy()
-        roi_mask[:roi_top, :] = 0
-        roi_mask[roi_bottom:, :] = 0
-
-        if np.sum(roi_mask) < 30:
-            return None, None, None
-
-        M = cv2.moments(roi_mask, binaryImage=True)
-        if M["m00"] == 0:
-            return None, None, None
-
-        cx = int(M["m10"] / M["m00"])
-        cy = int(M["m01"] / M["m00"])
-        return cx, cy, best_mask
-
-    def get_multi_row_centers(self, mask, frame_shape, num_rows=5):
-        """Maskeyi yatay dilimlere böl → eğim/curvature tahmini"""
-        if mask is None:
-            return []
+    def compute_steering_error(self, line_centers, frame_shape):
+        """
+        Çizgi merkezlerinden direksiyon hatasını hesapla.
+        
+        3 Senaryo:
+          2 çizgi: error = midpoint(sol, sağ) - frame_center
+          1 çizgi (sol): error = (cx + offset) - frame_center
+          1 çizgi (sağ): error = (cx - offset) - frame_center
+          0 çizgi: None (arama modu)
+        
+        Return: (error_normalized, target_cx, mode_str) veya (None, None, mode_str)
+                error_normalized: -1.0 ... +1.0
+                target_cx: hedef piksel x-koordinatı
+                mode_str: "2-LINE" / "1-LINE-L" / "1-LINE-R" / "SEARCH"
+        """
         h, w = frame_shape[:2]
+        center_x = w // 2
+        half_w = w / 2
+        
+        # Fallback half road width
+        half_road = self.estimated_half_road_width
+        if half_road is None:
+            half_road = w * self.default_half_road_pct
+        
+        if len(line_centers) == 0:
+            return None, None, "SEARCH"
+        
+        elif len(line_centers) >= 2:
+            # 2+ çizgi: en sol ve en sağ al
+            left_cx = line_centers[0][0]
+            right_cx = line_centers[-1][0]
+            
+            # Adaptive road width güncelleme (EMA)
+            gap = right_cx - left_cx
+            if gap > 20:  # Minimum anlamlı mesafe
+                new_half = gap / 2.0
+                if self.estimated_half_road_width is None:
+                    self.estimated_half_road_width = new_half
+                else:
+                    self.estimated_half_road_width = (
+                        (1 - self.road_width_alpha) * self.estimated_half_road_width +
+                        self.road_width_alpha * new_half
+                    )
+            
+            target_cx = (left_cx + right_cx) // 2
+            error = (target_cx - center_x) / half_w
+            
+            self.last_seen_line_side = "both"
+            return error, target_cx, "2-LINE"
+        
+        else:  # 1 çizgi
+            cx = line_centers[0][0]
+            
+            if cx < center_x:
+                # Sol çizgi → hedef sağa kaydır
+                target_cx = int(cx + half_road)
+                self.last_seen_line_side = "left"
+                mode_str = "1-LINE-L"
+            else:
+                # Sağ çizgi → hedef sola kaydır
+                target_cx = int(cx - half_road)
+                self.last_seen_line_side = "right"
+                mode_str = "1-LINE-R"
+            
+            error = (target_cx - center_x) / half_w
+            return error, target_cx, mode_str
+
+    def get_dual_row_centers(self, line_centers, frame_shape, num_rows=5):
+        """
+        Look-ahead: Maskeleri yatay dilimlere böl → curvature tahmini.
+        Her dilimde 2 çizgi varsa midpoint, 1 çizgi varsa offset hesapla.
+        """
+        h, w = frame_shape[:2]
+        center_x = w // 2
         roi_top = int(h * self.roi_top_ratio)
         roi_bottom = int(h * self.roi_bottom_ratio)
         roi_height = roi_bottom - roi_top
         if roi_height <= 0:
             return []
+        
+        half_road = self.estimated_half_road_width
+        if half_road is None:
+            half_road = w * self.default_half_road_pct
+        
+        # Tüm maskeleri topla
+        all_masks = [item[2] for item in line_centers if item[2] is not None]
+        if not all_masks:
+            return []
+        
         row_height = roi_height // num_rows
         centers = []
+        
         for i in range(num_rows):
             y_start = roi_top + i * row_height
             y_end = y_start + row_height
-            row_slice = mask[y_start:y_end, :]
-            if np.sum(row_slice) < 10:
+            
+            # Bu dilimde her maskenin centroid'ini bul
+            slice_cxs = []
+            for mask in all_masks:
+                row_slice = mask[y_start:y_end, :]
+                if np.sum(row_slice) < 10:
+                    continue
+                M = cv2.moments(row_slice, binaryImage=True)
+                if M["m00"] == 0:
+                    continue
+                slice_cx = int(M["m10"] / M["m00"])
+                slice_cxs.append(slice_cx)
+            
+            if not slice_cxs:
                 continue
-            M = cv2.moments(row_slice, binaryImage=True)
-            if M["m00"] == 0:
-                continue
-            cx = int(M["m10"] / M["m00"])
+            
             cy = y_start + row_height // 2
-            centers.append((cx, cy))
+            
+            if len(slice_cxs) >= 2:
+                # 2+ çizgi → midpoint
+                slice_cxs.sort()
+                target = (slice_cxs[0] + slice_cxs[-1]) // 2
+            else:
+                # 1 çizgi → offset uygula
+                cx_single = slice_cxs[0]
+                if cx_single < center_x:
+                    target = int(cx_single + half_road)
+                else:
+                    target = int(cx_single - half_road)
+            
+            centers.append((target, cy))
+        
         return centers
 
     # ─── Görüntü İşleme + Otonom/Manuel ───────────────────────
     def on_frame_received(self, frame):
         """Handle frame received from camera thread"""
         try:
-            # Save frame using frame_saver
-            self.frame_saver.try_save(frame)
+            # Son frame'i sakla (kaydetme butonu için)
+            self.current_frame = frame.copy()
+            
+            # Oto-save (isteğe bağlı) - yorumda bırakıldı
+            #self.frame_saver.try_save(frame)
 
             # Process frame with object detection
             processed_frame, fps, _, _, results = process_frame(
@@ -547,50 +682,62 @@ class MainWindow (QMainWindow):
             h, w = frame.shape[:2]
             center_x = w // 2
 
-            # ── Otonom Mod: YOLO + PID → DIFF komutu gönder ──
+            # ── Otonom Mod: Dual-Line PID → DIFF komutu gönder ──
             if self.autonomous_mode and results is not None:
                 masks = results.masks if hasattr(results, 'masks') and results.masks is not None else None
                 boxes = results.boxes if hasattr(results, 'boxes') and results.boxes is not None else None
 
-                cx, cy, mask_vis = self.find_line_center(masks, frame.shape)
-
-                # Fallback: bbox'tan merkez
-                if cx is None and boxes is not None and len(boxes) > 0:
-                    best_conf = 0
-                    best_box = None
+                # En yüksek güven değerini bul (debug amaçlı)
+                best_conf = 0.0
+                if boxes is not None and len(boxes) > 0:
                     for box in boxes:
                         conf = box.conf.item()
                         if conf > best_conf:
                             best_conf = conf
-                            best_box = box
-                    if best_box is not None:
-                        if best_box.xywhn is not None and len(best_box.xywhn) > 0:
-                            xn, yn, wn, hn = best_box.xywhn[0].cpu().numpy()
-                            cx = int(xn * w)
-                            cy = int(yn * h)
-                        else:
-                            x1, y1, x2, y2 = map(int, best_box.xyxy[0].cpu().numpy())
-                            cx = (x1 + x2) // 2
-                            cy = (y1 + y2) // 2
-                        mask_vis = None
 
-                if cx is not None:
-                    # Yol bulundu
+                # ── Tüm çizgi merkezlerini bul ──
+                line_centers = self.find_line_centers(masks, boxes, frame.shape)
+                
+                # ── Direksiyon hatasını hesapla ──
+                error, target_cx, mode_str = self.compute_steering_error(
+                    line_centers, frame.shape
+                )
+
+                debug_text = []
+                num_lines = len(line_centers)
+
+                if error is not None and target_cx is not None:
+                    # ── Çizgi(ler) bulundu ──
                     self.last_line_seen = time.time()
-                    error = (cx - center_x) / (w / 2)
 
-                    # Eğim analizi (anticipatory steering)
-                    if mask_vis is not None:
-                        row_centers = self.get_multi_row_centers(mask_vis, frame.shape, 5)
+                    # Look-ahead curvature analizi
+                    curvature = 0.0
+                    if line_centers:
+                        row_centers = self.get_dual_row_centers(
+                            line_centers, frame.shape, 5
+                        )
                         if len(row_centers) >= 3:
                             curvature = (row_centers[-1][0] - row_centers[0][0]) / w
                             error += curvature * 0.15
 
+                    # PID hesapla
                     pid_out, p_val, i_val, d_val = self.pid_compute(error)
                     pid_out = max(-100, min(100, pid_out))
+                    pid_out = float(np.tanh(pid_out / 100.0)) * 100.0
 
-                    speed_l = self.auto_base_speed - pid_out
-                    speed_r = self.auto_base_speed + pid_out
+                    # Curvature hız kontrolü
+                    curvature_abs = abs(curvature)
+                    slow_factor = 1.0 - min(curvature_abs * 2.5, 0.6)
+                    dynamic_base = self.auto_base_speed * slow_factor
+                    
+                    alpha_spd = 0.2
+                    self.smoothed_speed = (1 - alpha_spd) * self.smoothed_speed + alpha_spd * dynamic_base
+                    dynamic_base = self.smoothed_speed
+                    
+                    # Motor hızları
+                    speed_l = dynamic_base + pid_out
+                    speed_r = dynamic_base - pid_out
+                    
                     speed_l = max(-self.auto_max_speed, min(self.auto_max_speed, speed_l))
                     speed_r = max(-self.auto_max_speed, min(self.auto_max_speed, speed_r))
 
@@ -599,44 +746,152 @@ class MainWindow (QMainWindow):
                     if 0 < abs(speed_r) < self.auto_min_speed:
                         speed_r = self.auto_min_speed if speed_r > 0 else -self.auto_min_speed
 
-                    # Arama yönünü güncelle
+                    # Arama yönünü güncelle (fallback)
                     if error > 0.1:
                         self.search_dir = "right"
                     elif error < -0.1:
                         self.search_dir = "left"
 
                     # Pi'ye DIFF komutu gönder
-                    if self.socket_client and self.socket_client.connected:
-                        self.socket_client.send_command(f"DIFF,{speed_l:.1f},{speed_r:.1f}")
+                    cmd = f"DIFF,{round(speed_l)},{round(speed_r)}"
+                    if cmd != self.last_sent_cmd:
+                        self.last_sent_cmd = cmd
+                        if self.socket_client and self.socket_client.connected:
+                            self.socket_client.send_command(f"DIFF,{speed_l:.1f},{speed_r:.1f}")
 
-                    # Debug overlay çiz
-                    cv2.circle(processed_frame, (cx, cy), 10, (0, 0, 255), -1)
-                    cv2.line(processed_frame, (center_x, cy), (cx, cy), (0, 0, 255), 2)
-                    cv2.putText(processed_frame, f"PID:{pid_out:+.1f} L:{speed_l:.0f} R:{speed_r:.0f}",
-                                (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                    # ─── VİZÜELİZASYON ───
+                    # Frame merkez çizgisi (beyaz)
+                    cv2.line(processed_frame, (center_x, 0), (center_x, h),
+                             (255, 255, 255), 1)
+                    
+                    # Çizgi merkezlerini çiz
+                    for idx, (lcx, lcy, _) in enumerate(line_centers):
+                        if idx == 0 and num_lines >= 2:
+                            # Sol çizgi → Mavi
+                            cv2.circle(processed_frame, (lcx, lcy), 8,
+                                       (255, 0, 0), -1)
+                            cv2.putText(processed_frame, "L",
+                                        (lcx - 5, lcy - 12),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                        (255, 0, 0), 2)
+                        elif idx == num_lines - 1 and num_lines >= 2:
+                            # Sağ çizgi → Yeşil
+                            cv2.circle(processed_frame, (lcx, lcy), 8,
+                                       (0, 255, 0), -1)
+                            cv2.putText(processed_frame, "R",
+                                        (lcx - 5, lcy - 12),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                        (0, 255, 0), 2)
+                        else:
+                            # Tek çizgi veya ekstra → Cyan
+                            cv2.circle(processed_frame, (lcx, lcy), 8,
+                                       (0, 255, 255), -1)
+                    
+                    # Hesaplanan hedef merkez (sarı)
+                    target_cy = line_centers[0][1] if line_centers else h // 2
+                    cv2.circle(processed_frame, (target_cx, target_cy), 12,
+                               (0, 255, 255), 3)
+                    cv2.drawMarker(processed_frame, (target_cx, target_cy),
+                                   (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
+                    
+                    # Offset oku (hedef → merkez)
+                    cv2.arrowedLine(processed_frame, (center_x, target_cy),
+                                    (target_cx, target_cy), (0, 0, 255), 2)
+                    
+                    # 1-çizgi modunda tahmini yol sınırı (kesikli çizgi)
+                    if num_lines == 1 and self.estimated_half_road_width is not None:
+                        lcx_single = line_centers[0][0]
+                        lcy_single = line_centers[0][1]
+                        half_r = int(self.estimated_half_road_width)
+                        # Tahmini karşı çizgi konumu
+                        if mode_str == "1-LINE-L":
+                            est_x = lcx_single + half_r * 2
+                        else:
+                            est_x = lcx_single - half_r * 2
+                        # Kesikli dikey çizgi
+                        for dy in range(0, h, 12):
+                            y1d = dy
+                            y2d = min(dy + 6, h)
+                            cv2.line(processed_frame, (est_x, y1d),
+                                     (est_x, y2d), (0, 200, 200), 1)
+
+                    # Mod göstergesi
+                    mode_color = {
+                        "2-LINE": (0, 255, 0),
+                        "1-LINE-L": (255, 165, 0),
+                        "1-LINE-R": (0, 165, 255),
+                    }.get(mode_str, (200, 200, 200))
+                    cv2.putText(processed_frame, mode_str, (w - 150, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, mode_color, 2)
+                    
+                    # Estimated half road width bilgisi
+                    hrw_text = f"HRW: {self.estimated_half_road_width:.0f}px" if self.estimated_half_road_width else "HRW: ---"
+                    
+                    debug_text = [
+                        f"MODE: {mode_str} | LINES: {num_lines}",
+                        f"TARGET: {target_cx:3d} | CENTER: {center_x:3d} | OFFSET: {target_cx-center_x:+4d}",
+                        f"ERROR: {error:+.3f} | CURVE: {curvature:+.3f}",
+                        f"PID: {pid_out:+.1f} (P:{p_val:+.2f} I:{i_val:+.2f} D:{d_val:+.2f})",
+                        f"MOTOR L: {speed_l:+6.1f} | MOTOR R: {speed_r:+6.1f}",
+                        f"BASE: {self.smoothed_speed:.1f} | CONF: {best_conf:.2f} | {hrw_text}",
+                    ]
 
                 else:
-                    # Yol kayıp → arama modunda
+                    # ── Arama Modu (0 çizgi) ──
                     elapsed = time.time() - self.last_line_seen
                     if self.socket_client and self.socket_client.connected:
                         if elapsed < self.no_line_timeout:
-                            self.socket_client.send_command(f"DIFF,{self.auto_min_speed},{self.auto_min_speed}")
+                            # Kısa süre: düz devam et
+                            cmd = f"DIFF,{self.auto_min_speed},{self.auto_min_speed}"
                         elif elapsed < self.no_line_timeout * 3:
-                            if self.search_dir == "left":
-                                self.socket_client.send_command(f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}")
+                            # Arama: son görülen çizgiye doğru dön
+                            if self.last_seen_line_side == "left":
+                                # Sol çizgi kaybolduysa sola dön (çizgiyi bulmak için)
+                                cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
+                            elif self.last_seen_line_side == "right":
+                                # Sağ çizgi kaybolduysa sağa dön
+                                cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
                             else:
-                                self.socket_client.send_command(f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}")
+                                # Fallback: eski search_dir kullan
+                                if self.search_dir == "left":
+                                    cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
+                                else:
+                                    cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
                         else:
-                            self.socket_client.send_command("S")
+                            cmd = "S"
+                        
+                        if cmd != self.last_sent_cmd:
+                            self.last_sent_cmd = cmd
+                            self.socket_client.send_command(cmd)
 
-                    cv2.putText(processed_frame, "ARAMA MODU",
-                                (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    # Arama modu vizüelizasyonu
+                    search_side = self.last_seen_line_side or self.search_dir
+                    cv2.putText(processed_frame, f"SEARCH ({search_side})",
+                                (w - 220, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                                (0, 0, 255), 2)
+                    cv2.putText(processed_frame, "ARAMA MODU", (20, h - 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+                    debug_text = [
+                        f"SEARCH | CONF: {best_conf:.2f} | SIDE: {search_side}",
+                        f"Elapsed: {elapsed:.1f}s / timeout: {self.no_line_timeout:.1f}s",
+                    ]
 
                 # ROI çizgisi
                 roi_y = int(h * self.roi_top_ratio)
-                cv2.line(processed_frame, (0, roi_y), (w, roi_y), (255, 255, 0), 1)
-                # Merkez çizgisi
-                cv2.line(processed_frame, (center_x, roi_y), (center_x, h), (0, 165, 255), 1)
+                cv2.line(processed_frame, (0, roi_y), (w, roi_y),
+                         (255, 255, 0), 1)
+                
+                # DEBUG YAZISI
+                y_offset = 30
+                for i, text in enumerate(debug_text):
+                    cv2.putText(processed_frame, text, (10, y_offset + i * 25),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                (200, 200, 200), 1)
+                
+                # Merkez çizgisi (ROI'den alta)
+                cv2.line(processed_frame, (center_x, roi_y), (center_x, h),
+                         (0, 165, 255), 1)
 
             elif self.autonomous_mode and results is None:
                 # Otonom ama algılama yok
@@ -744,6 +999,15 @@ class MainWindow (QMainWindow):
         self.close_loading_dialog()
     
 
+    def capture_frame(self):
+        """Manuel frame kaydetme - settings butonuna basıldığında çağrılır"""
+        if self.current_frame is not None:
+            path = self.frame_saver.save_now(self.current_frame)
+            if path:
+                print(f"[CAPTURE] Frame kaydedildi: {path}")
+        else:
+            print("[CAPTURE] Kaydedilecek frame yok!")
+    
     def on_slider_changed(self):
         """Handle circular slider changes - only sends PWM speed commands"""
         v = int(self.rootSlider1.property("value"))
@@ -768,9 +1032,12 @@ class MainWindow (QMainWindow):
         self.autonomous_mode = not self.autonomous_mode
         
         if self.autonomous_mode:
-            # Otonom başlıyor → PID sıfırla
+            # Otonom başlıyor → her şeyi sıfırla
             self.pid_reset()
             self.last_line_seen = time.time()
+            self.last_sent_cmd = None
+            self.last_seen_line_side = None
+            self.estimated_half_road_width = None
             
             # Disable manual control when in autonomous mode
             if hasattr(self, 'quickWidgetJoystick'):
@@ -779,9 +1046,10 @@ class MainWindow (QMainWindow):
             # Clear WASD states when entering autonomous mode
             for key in self.wasd_pressed:
                 self.wasd_pressed[key] = False
-            print("[MOD] ═══ OTONOM BAŞLADI (PID on PC) ═══")
+            print("[MOD] ═══ OTONOM BAŞLADI (Dual-Line PID on PC) ═══")
         else:
-            # Manuel moda dön → dur
+            # Manuel moda dön → dur + sıfırla
+            self.last_sent_cmd = None
             if hasattr(self, 'socket_client') and self.socket_client and self.socket_client.connected:
                 self.socket_client.send_command("S")
             

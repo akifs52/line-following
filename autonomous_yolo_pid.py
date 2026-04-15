@@ -225,10 +225,6 @@ def handle_command(data):
         (right if INVERT_STEERING else left)()
     elif data == "right" or data == "R":
         (left if INVERT_STEERING else right)()
-    elif data == "crossleft" or data == "CL":
-        (cross_right if INVERT_STEERING else cross_left)()
-    elif data == "crossright" or data == "CR":
-        (cross_left if INVERT_STEERING else cross_right)()
     elif data == "stop" or data == "S":
         stop()
     else:
