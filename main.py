@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton,
                               QStatusBar, QLineEdit, QVBoxLayout, QWidget, 
                               QMessageBox, QDialog, QVBoxLayout, QHBoxLayout)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QTimer, Qt, QUrl, QThread, Signal, QSize, QEvent
+from PySide6.QtCore import QFile, QTimer, Qt, QUrl, QThread, Signal, QSize, QEvent, QMutex
 from PySide6.QtGui import QImage, QPixmap, QColor, QMovie, QKeySequence
 from PySide6.QtQuickWidgets import QQuickWidget
 import sys
@@ -12,8 +12,50 @@ import numpy as np
 import time
 import subprocess
 from ultralytics import YOLO
-from CamDetection import CameraThread, ObjectDetector, process_frame
+from CamDetection import CameraThread, ObjectDetector, process_frame, draw_bounding_boxes
 from frame_saver import FrameSaver
+
+# ═══════════════════════════════════════════════════════════════
+# YOLO DETECTION THREAD - Ayrı thread'te çalıştır
+# ═══════════════════════════════════════════════════════════════
+class YOLODetectionThread(QThread):
+    """YOLO inference'ı ayrı thread'te çalıştır (UI'yi free tut)"""
+    results_ready = Signal(object)  # (results)
+    
+    def __init__(self, detector):
+        super().__init__()
+        self.detector = detector
+        self.current_frame = None
+        self.running = True
+        self.mutex = QMutex()
+    
+    def set_frame(self, frame):
+        """Set current frame for processing"""
+        self.mutex.lock()
+        self.current_frame = frame.copy() if frame is not None else None
+        self.mutex.unlock()
+    
+    def run(self):
+        """Process frames continuously"""
+        while self.running:
+            self.mutex.lock()
+            frame = self.current_frame
+            self.mutex.unlock()
+            
+            if frame is not None:
+                try:
+                    results = self.detector.detect(frame)
+                    self.results_ready.emit(results)
+                except Exception as e:
+                    print(f"[YOLO] Error: {e}")
+            
+            time.sleep(0.001)  # Prevent CPU spinning
+    
+    def stop(self):
+        """Stop the thread"""
+        self.running = False
+        self.wait()
+
 from socket_client import SocketClient
 
 LABEL_TO_CMD = {
@@ -122,6 +164,12 @@ class MainWindow (QMainWindow):
         self.device = device
         self.verbose = False  # Flag to control our own debug output
 
+        # ✅ YOLO Detection Thread'i başlat
+        self.yolo_thread = YOLODetectionThread(self.detector)
+        self.yolo_thread.results_ready.connect(self.on_detection_results)
+        self.yolo_thread.start()
+        self.last_detection_results = None
+
         # Update device info in footer
         self.gpu_util_percent = None
         self.vram_usage_percent = None
@@ -168,40 +216,43 @@ class MainWindow (QMainWindow):
         self.autonomous_mode = False
         self.otonoumBtn.clicked.connect(self.toggle_autonomous_mode)
         
-        # ── Dual-Line PID Otonom Sürüş Parametreleri ──
-        # Error [-1,+1] → Motor [-100,+100] arası anlamlı fark üretmeli
-        self.pid_kp = 40.0          # Ana dönüş kuvveti (error=0.7 → P=28)
-        self.pid_ki = 0.1           # Kalıcı offset düzeltme
-        self.pid_kd = 12.0          # Sarsıntı sönümleme
-        self.pid_integral_limit = 50.0
+        # ══════════════════════════════════════════════════
+        # ✅ OPTIMIZED PID PARAMETERS
+        # ══════════════════════════════════════════════════
+        self.pid_kp = 25.0
+        self.pid_ki = 0.05
+        self.pid_kd = 10.0
+        self.pid_integral_limit = 30.0
         self.pid_prev_error = 0.0
         self.pid_integral = 0.0
         self.pid_last_time = time.time()
         
-        # Motor hızları (otonom mod)
+        # Motor hızları - çok hızlı başlamıyacak
         self.auto_base_speed = 40
-        self.auto_min_speed = 15
-        self.auto_max_speed = 70
+        self.auto_min_speed = 35
+        self.auto_max_speed = 50
         self.smoothed_speed = self.auto_base_speed
         
-        # ROI – Label analizi: center_y avg=0.78, range 0.59-0.90
+        # ROI
         self.roi_top_ratio = 0.55
         self.roi_bottom_ratio = 1.0
         
-        # ── Adaptive Road Width Tracking ──
-        self.estimated_half_road_width = None   # Piksel — 2 çizgiden öğrenilir
-        self.road_width_alpha = 0.1             # EMA katsayısı
-        self.default_half_road_pct = 0.20       # Fallback: frame_width * 0.20
+        # Adaptive Road Width
+        self.estimated_half_road_width = None
+        self.road_width_alpha = 0.1
+        self.default_half_road_pct = 0.20
         
-        # Yol kaybolma & Arama modu
+        # Yol kaybolma & Arama
         self.last_line_seen = time.time()
         self.no_line_timeout = 0.8
-        self.search_turn_speed = 25
+        self.search_turn_speed = 20     # ✅ DÜŞÜRÜLDÜ: 25 → 20
         self.search_dir = "left"
-        self.last_seen_line_side = None  # "left" / "right" / "both"
+        self.last_seen_line_side = None
         
-        # Komut tekrarı önleme
+        # ✅ Socket spam kontrolü
         self.last_sent_cmd = None
+        self.last_cmd_send_time = 0
+        self.cmd_send_interval = 0.05   # ✅ Min 50ms ara aç (socket spam azalt)
         
         # Initialize status displays
         self.steeringStatusValue.setText("INACTIVE")
@@ -661,23 +712,43 @@ class MainWindow (QMainWindow):
         
         return centers
 
+    def apply_deadzone(self, speed):
+        """Uygulanan PID deadzone yumuşatması"""
+        if abs(speed) < 40:
+            return 0 if abs(speed) < 15 else (self.auto_min_speed if speed > 0 else -self.auto_min_speed)
+        return speed
+
+    # ═══════════════════════════════════════════════════════════
+    # ✅ DETECTION RESULTS HANDLER - Separation of concerns
+    # ═══════════════════════════════════════════════════════════
+    def on_detection_results(self, results):
+        """Handle YOLO detection results (from separate thread)"""
+        self.last_detection_results = results
+
     # ─── Görüntü İşleme + Otonom/Manuel ───────────────────────
     def on_frame_received(self, frame):
         """Handle frame received from camera thread"""
         try:
-            # Son frame'i sakla (kaydetme butonu için)
             self.current_frame = frame.copy()
             
-            # Oto-save (isteğe bağlı) - yorumda bırakıldı
-            #self.frame_saver.try_save(frame)
+            # Feed frame to YOLO thread (non-blocking)
+            self.yolo_thread.set_frame(frame)
+            
+            # Use last detection results
+            results = self.last_detection_results
 
-            # Process frame with object detection
-            processed_frame, fps, _, _, results = process_frame(
-                frame,
-                self.detector,
-                frame_counter=0,
-                show_fps=True
-            )
+            # Kendimiz FPS hesaplayalım (bloklamamak için process_frame çağırmıyoruz)
+            fps = 0
+            if hasattr(self, 'prev_time'):
+                current_time = time.time()
+                fps = 1 / (current_time - self.prev_time)
+                self.prev_time = current_time
+            else:
+                self.prev_time = time.time()
+
+            processed_frame = frame.copy()
+            if results is not None:
+                processed_frame = draw_bounding_boxes(processed_frame, results, self.detector.names)
 
             h, w = frame.shape[:2]
             center_x = w // 2
@@ -723,28 +794,26 @@ class MainWindow (QMainWindow):
                     # PID hesapla
                     pid_out, p_val, i_val, d_val = self.pid_compute(error)
                     pid_out = max(-100, min(100, pid_out))
-                    pid_out = float(np.tanh(pid_out / 100.0)) * 100.0
+                    pid_out = float(np.tanh(pid_out / 90.0)) * 100.0
 
-                    # Curvature hız kontrolü
+                    # Curvature hız kontrolü (İptal edildi, düz hız ile dönüş hızı aynı)
                     curvature_abs = abs(curvature)
-                    slow_factor = 1.0 - min(curvature_abs * 2.5, 0.6)
+                    slow_factor = 1.0  # Düz hız ile aynı
                     dynamic_base = self.auto_base_speed * slow_factor
                     
-                    alpha_spd = 0.2
+                    alpha_spd = 0.1
                     self.smoothed_speed = (1 - alpha_spd) * self.smoothed_speed + alpha_spd * dynamic_base
                     dynamic_base = self.smoothed_speed
                     
-                    # Motor hızları
-                    speed_l = dynamic_base + pid_out
-                    speed_r = dynamic_base - pid_out
+                    # Motor hızları (Yönler terslendi)
+                    speed_l = dynamic_base - pid_out
+                    speed_r = dynamic_base + pid_out
                     
                     speed_l = max(-self.auto_max_speed, min(self.auto_max_speed, speed_l))
                     speed_r = max(-self.auto_max_speed, min(self.auto_max_speed, speed_r))
 
-                    if 0 < abs(speed_l) < self.auto_min_speed:
-                        speed_l = self.auto_min_speed if speed_l > 0 else -self.auto_min_speed
-                    if 0 < abs(speed_r) < self.auto_min_speed:
-                        speed_r = self.auto_min_speed if speed_r > 0 else -self.auto_min_speed
+                    speed_l = self.apply_deadzone(speed_l)
+                    speed_r = self.apply_deadzone(speed_r)
 
                     # Arama yönünü güncelle (fallback)
                     if error > 0.1:
@@ -752,10 +821,12 @@ class MainWindow (QMainWindow):
                     elif error < -0.1:
                         self.search_dir = "left"
 
-                    # Pi'ye DIFF komutu gönder
+                    # ✅ Socket spam kontrolü - en az 50ms ara
+                    now = time.time()
                     cmd = f"DIFF,{round(speed_l)},{round(speed_r)}"
-                    if cmd != self.last_sent_cmd:
+                    if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
                         self.last_sent_cmd = cmd
+                        self.last_cmd_send_time = now
                         if self.socket_client and self.socket_client.connected:
                             self.socket_client.send_command(f"DIFF,{speed_l:.1f},{speed_r:.1f}")
 
@@ -839,6 +910,7 @@ class MainWindow (QMainWindow):
                 else:
                     # ── Arama Modu (0 çizgi) ──
                     elapsed = time.time() - self.last_line_seen
+                    now = time.time()
                     if self.socket_client and self.socket_client.connected:
                         if elapsed < self.no_line_timeout:
                             # Kısa süre: düz devam et
@@ -860,8 +932,9 @@ class MainWindow (QMainWindow):
                         else:
                             cmd = "S"
                         
-                        if cmd != self.last_sent_cmd:
+                        if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
                             self.last_sent_cmd = cmd
+                            self.last_cmd_send_time = now
                             self.socket_client.send_command(cmd)
 
                     # Arama modu vizüelizasyonu
@@ -1101,6 +1174,10 @@ class MainWindow (QMainWindow):
             print("[JOYSTICK] Released, sending STOP")
     
     def closeEvent(self, event):
+        # Stop YOLO thread
+        if hasattr(self, 'yolo_thread') and self.yolo_thread:
+            self.yolo_thread.stop()
+            
         # Close camera thread if running
         self.close_camera()
 
