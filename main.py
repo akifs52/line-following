@@ -20,7 +20,7 @@ from frame_saver import FrameSaver
 # ═══════════════════════════════════════════════════════════════
 class YOLODetectionThread(QThread):
     """YOLO inference'ı ayrı thread'te çalıştır (UI'yi free tut)"""
-    results_ready = Signal(object)  # (results)
+    results_ready = Signal(object, object)  # frame, results
     
     def __init__(self, detector):
         super().__init__()
@@ -28,28 +28,34 @@ class YOLODetectionThread(QThread):
         self.current_frame = None
         self.running = True
         self.mutex = QMutex()
+        self.new_frame = False   # ✅ yeni frame flag
     
     def set_frame(self, frame):
         """Set current frame for processing"""
         self.mutex.lock()
         self.current_frame = frame.copy() if frame is not None else None
+        self.new_frame = True     # ✅ sadece yeni frame
         self.mutex.unlock()
     
     def run(self):
         """Process frames continuously"""
         while self.running:
             self.mutex.lock()
+            if not self.new_frame:
+                self.mutex.unlock()
+                time.sleep(0.002)
+                continue
+            
             frame = self.current_frame
+            self.new_frame = False
             self.mutex.unlock()
             
             if frame is not None:
                 try:
                     results = self.detector.detect(frame)
-                    self.results_ready.emit(results)
+                    self.results_ready.emit(frame, results)
                 except Exception as e:
                     print(f"[YOLO] Error: {e}")
-            
-            time.sleep(0.001)  # Prevent CPU spinning
     
     def stop(self):
         """Stop the thread"""
@@ -166,7 +172,7 @@ class MainWindow (QMainWindow):
 
         # ✅ YOLO Detection Thread'i başlat
         self.yolo_thread = YOLODetectionThread(self.detector)
-        self.yolo_thread.results_ready.connect(self.on_detection_results)
+        self.yolo_thread.results_ready.connect(self.on_frame_processed)
         self.yolo_thread.start()
         self.last_detection_results = None
 
@@ -184,8 +190,8 @@ class MainWindow (QMainWindow):
             self.vramLabel.setText("N/A")
             self.vramLabel.setStyleSheet("color: #6B7280; border-radius: 4px;")
 
-         #timer update frame
-        self.timer = QTimer()
+         #timer update frame silindi
+        # self.timer = QTimer()
        
 
          #FPS için
@@ -431,11 +437,9 @@ class MainWindow (QMainWindow):
         # Update status display
         self.update_status_display()
         
-        # If both are ready, start the timer and close loading dialog
+        # If both are ready, close loading dialog
         if camera_ready and socket_ready:
             self.close_loading_dialog()
-            if not self.timer.isActive():
-                self.timer.start(30)
             return
         
         # If camera is not ready but socket is, show camera error
@@ -443,8 +447,6 @@ class MainWindow (QMainWindow):
             if not hasattr(self, '_camera_error_shown'):
                 self._camera_error_shown = True
                 QMessageBox.critical(self, "Kamera Hatası", "Kamera başlatılamadı!")
-            if not self.timer.isActive():
-                self.timer.start(30)  # Start timer anyway to show error on screen
             QTimer.singleShot(100, self.check_connections)
             return
         
@@ -453,8 +455,6 @@ class MainWindow (QMainWindow):
             if not hasattr(self, '_socket_error_shown'):
                 self._socket_error_shown = True
                 QMessageBox.critical(self, "Bağlantı Hatası", "Sunucuya bağlanılamadı!")
-            if not self.timer.isActive():
-                self.timer.start(30)  # Start timer anyway to show camera feed
             QTimer.singleShot(100, self.check_connections)
             return
         
@@ -484,7 +484,7 @@ class MainWindow (QMainWindow):
             
             # Start new camera thread
             self.camera_thread = CameraThread(fullipCam)
-            self.camera_thread.frame_ready.connect(self.on_frame_received)
+            self.camera_thread.frame_ready.connect(self.yolo_thread.set_frame)
             self.camera_thread.error_occurred.connect(self.handle_camera_error)
             self.camera_thread.start()
             
@@ -721,21 +721,11 @@ class MainWindow (QMainWindow):
     # ═══════════════════════════════════════════════════════════
     # ✅ DETECTION RESULTS HANDLER - Separation of concerns
     # ═══════════════════════════════════════════════════════════
-    def on_detection_results(self, results):
-        """Handle YOLO detection results (from separate thread)"""
-        self.last_detection_results = results
-
-    # ─── Görüntü İşleme + Otonom/Manuel ───────────────────────
-    def on_frame_received(self, frame):
-        """Handle frame received from camera thread"""
+    def on_frame_processed(self, frame, results):
+        """YOLO'dan işlenmiş frame geldi"""
         try:
             self.current_frame = frame.copy()
-            
-            # Feed frame to YOLO thread (non-blocking)
-            self.yolo_thread.set_frame(frame)
-            
-            # Use last detection results
-            results = self.last_detection_results
+            self.last_detection_results = results
 
             # Kendimiz FPS hesaplayalım (bloklamamak için process_frame çağırmıyoruz)
             fps = 0
