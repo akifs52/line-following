@@ -12,15 +12,495 @@ import time
 import io
 from PIL import Image
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 app = FastAPI()
+
+# Thread pool for non-blocking YOLO inference
+yolo_executor = ThreadPoolExecutor(max_workers=1)
+
+# Cache main event loop on startup for thread-safe async operations
+@app.on_event("startup")
+async def startup_event():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+    print("[STARTUP] Main event loop cached for thread operations")
+
+# ═══════════════════════════════════════════════════════════════
+# MULTI-THREADED AUTONOMOUS SYSTEM
+# ═══════════════════════════════════════════════════════════════
+autonomous_thread = None
+autonomous_running = False
+autonomous_thread_lock = threading.Lock()
+latest_detections = None
+latest_frame_for_pid = None
+latest_annotated_frame = None  # Frame with PID visualization for broadcast
+
+def autonomous_worker():
+    """Dedicated thread for PID steering - runs at 30Hz independent of YOLO"""
+    global autonomous_running, latest_frame_for_pid, last_results, latest_annotated_frame
+    
+    while autonomous_running:
+        try:
+            # Check if we have recent results to process
+            if last_results is not None and AUTONOMOUS_MODE:
+                now = time.time()
+                # Only process if results are fresh enough
+                if now - last_results_ts < RESULTS_HOLD:
+                    # Get the latest cached frame
+                    frame = latest_frame_for_pid
+                    if frame is not None:
+                        # Process PID steering with visualization
+                        cmd, annotated = auto_steering.process(last_results, frame.copy())
+                        # Store annotated frame for main thread to broadcast
+                        latest_annotated_frame = annotated
+                        if cmd and main_loop is not None:
+                            # Send command asynchronously using cached main loop
+                            asyncio.run_coroutine_threadsafe(
+                                send_host_command(cmd), 
+                                main_loop
+                            )
+            
+            # Sleep for ~30Hz (CPU usage 30% lower than 50Hz)
+            time.sleep(0.033)
+            
+        except Exception as e:
+            print(f"[AUTONOMOUS ERROR] {e}")
+            time.sleep(0.05)
+
+def start_autonomous_thread():
+    """Start the autonomous worker thread"""
+    global autonomous_thread, autonomous_running
+    with autonomous_thread_lock:
+        if autonomous_thread is None or not autonomous_thread.is_alive():
+            autonomous_running = True
+            autonomous_thread = threading.Thread(target=autonomous_worker, daemon=True)
+            autonomous_thread.start()
+            print("[AUTONOMOUS] Worker thread started (50Hz)")
+
+def stop_autonomous_thread():
+    """Stop the autonomous worker thread"""
+    global autonomous_running
+    with autonomous_thread_lock:
+        autonomous_running = False
+        print("[AUTONOMOUS] Worker thread stopping")
+
+# ═══════════════════════════════════════════════════════════════
+# AUTONOMOUS PID SYSTEM
+# ═══════════════════════════════════════════════════════════════
+AUTONOMOUS_MODE = False
+
+# Cached main event loop for thread-safe async operations
+main_loop = None
+
+# Cache for smooth autonomous operation (YOLO slower than PID)
+last_results = None
+last_results_ts = 0.0
+RESULTS_HOLD = 0.5  # Use cached results for 500ms if no new detection
+
+class AutonomousSteering:
+    """Dual-Line PID Controller for line following"""
+    
+    def __init__(self):
+        # PID Parameters
+        self.pid_kp = 25.0
+        self.pid_ki = 0.05
+        self.pid_kd = 10.0
+        self.pid_integral_limit = 30.0
+        self.pid_prev_error = 0.0
+        self.pid_integral = 0.0
+        self.pid_last_time = time.time()
+        
+        # Motor speeds
+        self.auto_base_speed = 40
+        self.auto_min_speed = 35
+        self.auto_max_speed = 50
+        self.smoothed_speed = self.auto_base_speed
+        
+        # ROI
+        self.roi_top_ratio = 0.55
+        self.roi_bottom_ratio = 1.0
+        
+        # Adaptive Road Width
+        self.estimated_half_road_width = None
+        self.road_width_alpha = 0.1
+        self.default_half_road_pct = 0.20
+        
+        # Line tracking & search
+        self.last_line_seen = time.time()
+        self.no_line_timeout = 0.8
+        self.search_turn_speed = 20
+        self.search_dir = "left"
+        self.last_seen_line_side = None
+        
+        # Command spam control
+        self.last_sent_cmd = None
+        self.last_cmd_send_time = 0
+        self.cmd_send_interval = 0.05  # 50ms
+    
+    def pid_compute(self, error):
+        """PID compute → (output, p, i, d)"""
+        now = time.time()
+        dt = now - self.pid_last_time
+        if dt <= 0:
+            dt = 0.01
+        self.pid_last_time = now
+        
+        p = self.pid_kp * error
+        
+        self.pid_integral += error * dt
+        self.pid_integral = max(-self.pid_integral_limit,
+                                min(self.pid_integral_limit, self.pid_integral))
+        i = self.pid_ki * self.pid_integral
+        
+        derivative = (error - self.pid_prev_error) / dt
+        d = self.pid_kd * derivative
+        self.pid_prev_error = error
+        
+        return p + i + d, p, i, d
+    
+    def pid_reset(self):
+        """Reset PID state"""
+        self.pid_prev_error = 0.0
+        self.pid_integral = 0.0
+        self.pid_last_time = time.time()
+        self.smoothed_speed = self.auto_base_speed
+    
+    def find_line_centers(self, masks, boxes, frame_shape):
+        """Find all line centers from YOLO masks"""
+        if masks is None or len(masks.data) == 0:
+            return []
+        
+        h, w = frame_shape[:2]
+        roi_top = int(h * self.roi_top_ratio)
+        roi_bottom = int(h * self.roi_bottom_ratio)
+        
+        line_data = []
+        
+        for idx, mask_tensor in enumerate(masks.data):
+            # Confidence check
+            if boxes is not None and idx < len(boxes):
+                conf = boxes[idx].conf.item()
+                if conf < 0.40:
+                    continue
+            
+            mask_np = mask_tensor.cpu().numpy()
+            mask_resized = cv2.resize(mask_np, (w, h), interpolation=cv2.INTER_NEAREST)
+            mask_binary = (mask_resized > 0.5).astype(np.uint8)
+            
+            if np.sum(mask_binary) < 50:
+                continue
+            
+            # Apply ROI
+            roi_mask = mask_binary.copy()
+            roi_mask[:roi_top, :] = 0
+            roi_mask[roi_bottom:, :] = 0
+            
+            if np.sum(roi_mask) < 30:
+                continue
+            
+            M = cv2.moments(roi_mask, binaryImage=True)
+            if M["m00"] == 0:
+                continue
+            
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            line_data.append((cx, cy, mask_binary))
+        
+        # Sort left to right
+        line_data.sort(key=lambda item: item[0])
+        return line_data
+    
+    def compute_steering_error(self, line_centers, frame_shape):
+        """Compute steering error from line centers"""
+        h, w = frame_shape[:2]
+        center_x = w // 2
+        half_w = w / 2
+        
+        half_road = self.estimated_half_road_width
+        if half_road is None:
+            half_road = w * self.default_half_road_pct
+        
+        if len(line_centers) == 0:
+            return None, None, "SEARCH"
+        
+        elif len(line_centers) >= 2:
+            left_cx = line_centers[0][0]
+            right_cx = line_centers[-1][0]
+            
+            # Update adaptive road width
+            gap = right_cx - left_cx
+            if gap > 20:
+                new_half = gap / 2.0
+                if self.estimated_half_road_width is None:
+                    self.estimated_half_road_width = new_half
+                else:
+                    self.estimated_half_road_width = (
+                        (1 - self.road_width_alpha) * self.estimated_half_road_width +
+                        self.road_width_alpha * new_half
+                    )
+            
+            target_cx = (left_cx + right_cx) // 2
+            error = (target_cx - center_x) / half_w
+            
+            self.last_seen_line_side = "both"
+            return error, target_cx, "2-LINE"
+        
+        else:  # 1 line
+            cx = line_centers[0][0]
+            
+            if cx < center_x:
+                target_cx = int(cx + half_road)
+                self.last_seen_line_side = "left"
+                mode_str = "1-LINE-L"
+            else:
+                target_cx = int(cx - half_road)
+                self.last_seen_line_side = "right"
+                mode_str = "1-LINE-R"
+            
+            error = (target_cx - center_x) / half_w
+            return error, target_cx, mode_str
+    
+    def get_dual_row_centers(self, line_centers, frame_shape, num_rows=5):
+        """Look-ahead: slice masks into horizontal rows for curvature estimation"""
+        h, w = frame_shape[:2]
+        center_x = w // 2
+        roi_top = int(h * self.roi_top_ratio)
+        roi_bottom = int(h * self.roi_bottom_ratio)
+        roi_height = roi_bottom - roi_top
+        if roi_height <= 0:
+            return []
+        
+        half_road = self.estimated_half_road_width
+        if half_road is None:
+            half_road = w * self.default_half_road_pct
+        
+        all_masks = [item[2] for item in line_centers if item[2] is not None]
+        if not all_masks:
+            return []
+        
+        row_height = roi_height // num_rows
+        centers = []
+        
+        for i in range(num_rows):
+            y_start = roi_top + i * row_height
+            y_end = y_start + row_height
+            
+            slice_cxs = []
+            for mask in all_masks:
+                row_slice = mask[y_start:y_end, :]
+                if np.sum(row_slice) < 10:
+                    continue
+                M = cv2.moments(row_slice, binaryImage=True)
+                if M["m00"] == 0:
+                    continue
+                slice_cx = int(M["m10"] / M["m00"])
+                slice_cxs.append(slice_cx)
+            
+            if not slice_cxs:
+                continue
+            
+            cy = y_start + row_height // 2
+            
+            if len(slice_cxs) >= 2:
+                slice_cxs.sort()
+                target = (slice_cxs[0] + slice_cxs[-1]) // 2
+            else:
+                cx_single = slice_cxs[0]
+                if cx_single < center_x:
+                    target = int(cx_single + half_road)
+                else:
+                    target = int(cx_single - half_road)
+            
+            centers.append((target, cy))
+        
+        return centers
+    
+    def apply_deadzone(self, speed):
+        """Apply deadzone smoothing"""
+        if abs(speed) < 40:
+            return 0 if abs(speed) < 15 else (self.auto_min_speed if speed > 0 else -self.auto_min_speed)
+        return speed
+    
+    def process(self, results, frame):
+        """
+        Main processing loop - returns (cmd, annotated_frame) or (None, annotated_frame)
+        """
+        global AUTONOMOUS_MODE
+        
+        if not AUTONOMOUS_MODE or results is None:
+            return None, frame
+        
+        masks = results.masks if hasattr(results, 'masks') and results.masks is not None else None
+        boxes = results.boxes if hasattr(results, 'boxes') and results.boxes is not None else None
+        
+        h, w = frame.shape[:2]
+        center_x = w // 2
+        
+        # Find line centers
+        line_centers = self.find_line_centers(masks, boxes, frame.shape)
+        
+        # Compute steering error
+        error, target_cx, mode_str = self.compute_steering_error(line_centers, frame.shape)
+        
+        annotated = frame.copy()
+        num_lines = len(line_centers)
+        cmd = None
+        
+        if error is not None and target_cx is not None:
+            # Lines found
+            self.last_line_seen = time.time()
+            
+            # Look-ahead curvature analysis
+            curvature = 0.0
+            if line_centers:
+                row_centers = self.get_dual_row_centers(line_centers, frame.shape, 5)
+                if len(row_centers) >= 3:
+                    curvature = (row_centers[-1][0] - row_centers[0][0]) / w
+                    error += curvature * 0.15
+            
+            # PID compute
+            pid_out, p_val, i_val, d_val = self.pid_compute(error)
+            pid_out = max(-100, min(100, pid_out))
+            pid_out = float(np.tanh(pid_out / 90.0)) * 100.0
+            
+            # Speed control
+            dynamic_base = self.auto_base_speed
+            alpha_spd = 0.1
+            self.smoothed_speed = (1 - alpha_spd) * self.smoothed_speed + alpha_spd * dynamic_base
+            dynamic_base = self.smoothed_speed
+            
+            # Motor speeds (corrected directions - was reversed)
+            speed_l = dynamic_base + pid_out
+            speed_r = dynamic_base - pid_out
+            
+            speed_l = max(-self.auto_max_speed, min(self.auto_max_speed, speed_l))
+            speed_r = max(-self.auto_max_speed, min(self.auto_max_speed, speed_r))
+            
+            speed_l = self.apply_deadzone(speed_l)
+            speed_r = self.apply_deadzone(speed_r)
+            
+            # Update search direction
+            if error > 0.1:
+                self.search_dir = "right"
+            elif error < -0.1:
+                self.search_dir = "left"
+            
+            # Command spam control
+            now = time.time()
+            cmd = f"DIFF,{round(speed_l)},{round(speed_r)}"
+            if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
+                self.last_sent_cmd = cmd
+                self.last_cmd_send_time = now
+            else:
+                cmd = None
+            
+            # Visualization
+            cv2.line(annotated, (center_x, 0), (center_x, h), (255, 255, 255), 1)
+            
+            for idx, (lcx, lcy, _) in enumerate(line_centers):
+                if idx == 0 and num_lines >= 2:
+                    cv2.circle(annotated, (lcx, lcy), 8, (255, 0, 0), -1)
+                    cv2.putText(annotated, "L", (lcx - 5, lcy - 12),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                elif idx == num_lines - 1 and num_lines >= 2:
+                    cv2.circle(annotated, (lcx, lcy), 8, (0, 255, 0), -1)
+                    cv2.putText(annotated, "R", (lcx - 5, lcy - 12),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                else:
+                    cv2.circle(annotated, (lcx, lcy), 8, (0, 255, 255), -1)
+            
+            target_cy = line_centers[0][1] if line_centers else h // 2
+            cv2.circle(annotated, (target_cx, target_cy), 12, (0, 255, 255), 3)
+            cv2.drawMarker(annotated, (target_cx, target_cy),
+                          (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
+            
+            cv2.arrowedLine(annotated, (center_x, target_cy),
+                            (target_cx, target_cy), (0, 0, 255), 2)
+            
+            # Mode indicator
+            mode_color = {
+                "2-LINE": (0, 255, 0),
+                "1-LINE-L": (255, 165, 0),
+                "1-LINE-R": (0, 165, 255),
+            }.get(mode_str, (200, 200, 200))
+            cv2.putText(annotated, mode_str, (w - 150, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, mode_color, 2)
+            
+            # Debug info
+            hrw_text = f"HRW: {self.estimated_half_road_width:.0f}px" if self.estimated_half_road_width else "HRW: ---"
+            debug_lines = [
+                f"MODE: {mode_str} | LINES: {num_lines}",
+                f"TARGET: {target_cx:3d} | OFFSET: {target_cx-center_x:+4d}",
+                f"ERROR: {error:+.3f} | CURVE: {curvature:+.3f}",
+                f"PID: {pid_out:+.1f}",
+                f"MOTOR L: {speed_l:+6.1f} | R: {speed_r:+6.1f}",
+                f"{hrw_text}",
+            ]
+            for i, text in enumerate(debug_lines):
+                cv2.putText(annotated, text, (10, 30 + i * 25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+        
+        else:
+            # Search mode (no lines)
+            elapsed = time.time() - self.last_line_seen
+            now = time.time()
+            
+            if elapsed < self.no_line_timeout:
+                cmd = f"DIFF,{self.auto_min_speed},{self.auto_min_speed}"
+            elif elapsed < self.no_line_timeout * 3:
+                if self.last_seen_line_side == "left":
+                    cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
+                elif self.last_seen_line_side == "right":
+                    cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
+                else:
+                    if self.search_dir == "left":
+                        cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
+                    else:
+                        cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
+            else:
+                cmd = "S"
+            
+            if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
+                self.last_sent_cmd = cmd
+                self.last_cmd_send_time = now
+            else:
+                cmd = None
+            
+            # Search mode visualization
+            cv2.putText(annotated, "SEARCH MODE", (w // 2 - 80, h // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        return cmd, annotated
+
+
+# Global autonomous steering instance
+auto_steering = AutonomousSteering()
 
 # YOLO modelini yükle
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 print(f"[INFO] Using: {device}")
-model_path = Path(__file__).resolve().parent.parent / "yolov8n.pt"
+model_path = Path(__file__).resolve().parent.parent / "lines.pt"
 detector = YOLO(str(model_path))
 detector.to(device)
+
+# Enable half precision for GPU (faster inference)
+if device == "cuda:0":
+    detector.model = detector.model.half()
+    print("[INFO] Half precision (FP16) enabled")
+
+# Warmup YOLO with 10 dummy frames (prevents memory allocation spikes)
+print("[INFO] Warming up YOLO...")
+dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+for i in range(10):
+    with torch.no_grad():
+        _ = detector(dummy, verbose=False)
+print("[INFO] YOLO Ready")
+
+# Detection input size (smaller = faster)
+DETECT_INPUT_WIDTH = 480
+DETECT_INPUT_HEIGHT = 320
 
 # WebSocket bağlantıları
 active_connections = []
@@ -57,6 +537,7 @@ host_send_lock = asyncio.Lock()
 HOST_CONNECT_TIMEOUT = 5
 DETECT_EVERY_N = 3
 DETECT_MIN_INTERVAL = 0.2
+DETECT_BOX_HOLD = 0.8
 
 async def broadcast_camera_status(status: str, detail: str = None):
     payload = {"type": "camera_status", "status": status}
@@ -71,6 +552,9 @@ async def broadcast_host_status(status: str, detail: str = None):
     await manager.broadcast(json.dumps(payload))
 
 async def camera_tcp_loop(ip: str, port: int):
+    # Global declarations for variables modified in nested blocks
+    global latest_frame_for_pid, last_results, last_results_ts, last_detections, latest_annotated_frame
+    
     try:
         reader, writer = await asyncio.open_connection(ip, port)
     except Exception as e:
@@ -81,6 +565,8 @@ async def camera_tcp_loop(ip: str, port: int):
     buffer = bytearray()
     frame_index = 0
     last_detect_ts = 0.0
+    last_boxes_ts = 0.0
+    last_detections = []
     try:
         while True:
             chunk = await reader.read(4096)
@@ -135,18 +621,152 @@ async def camera_tcp_loop(ip: str, port: int):
                         await manager.broadcast(json.dumps({"type": "frame", "frame": frame_b64}))
                     else:
                         try:
-                            results = detector(decoded)
-                            annotated = results[0].plot()
-                            ok, buffer_jpg = cv2.imencode(".jpg", annotated)
-                            if not ok:
-                                raise ValueError("encode failed")
-                            frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                            # Resize for faster YOLO inference
+                            small_frame = cv2.resize(decoded, (DETECT_INPUT_WIDTH, DETECT_INPUT_HEIGHT))
+                            # Run YOLO in thread pool with no_grad for speed
+                            loop = asyncio.get_event_loop()
+                            with torch.no_grad():
+                                results = await loop.run_in_executor(yolo_executor, detector, small_frame, False)  # verbose=False
+                            # Cache results for smooth PID operation
+                            last_results = results[0] if results else None
+                            last_results_ts = time.time()
+                            names = results[0].names if hasattr(results[0], "names") else {}
+                            detections = []
+                            for box in results[0].boxes:
+                                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                                conf = float(box.conf[0].cpu().numpy())
+                                cls = int(box.cls[0].cpu().numpy())
+                                label = names.get(cls, str(cls)) if isinstance(names, dict) else str(cls)
+                                # Scale boxes back to original frame size
+                                scale_x = decoded.shape[1] / DETECT_INPUT_WIDTH
+                                scale_y = decoded.shape[0] / DETECT_INPUT_HEIGHT
+                                x1, y1, x2, y2 = int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)
+                                detections.append((x1, y1, x2, y2, cls, conf, label))
+                            last_detections = detections
+                            last_boxes_ts = now
+                            annotated = decoded.copy()
+                            for x1, y1, x2, y2, cls, conf, label in detections:
+                                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                text = f"{label} {conf:.2f}"
+                                (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                                text_y = y1 - 6 if y1 - 6 > th else y1 + th + 6
+                                cv2.rectangle(
+                                    annotated,
+                                    (x1, text_y - th - baseline),
+                                    (x1 + tw, text_y + baseline),
+                                    (0, 255, 0),
+                                    -1
+                                )
+                                cv2.putText(
+                                    annotated,
+                                    text,
+                                    (x1, text_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 0, 0),
+                                    1,
+                                    cv2.LINE_AA
+                                )
+                            # ═══════════════════════════════════════════════════════════════
+                            # Cache frame for autonomous thread (PID runs in separate thread)
+                            # ═══════════════════════════════════════════════════════════════
+                            latest_frame_for_pid = annotated
+                            
+                            # In autonomous mode, prefer annotated frame from PID thread
+                            if AUTONOMOUS_MODE and latest_annotated_frame is not None:
+                                try:
+                                    ok, buffer_jpg = cv2.imencode(".jpg", latest_annotated_frame)
+                                    if ok:
+                                        frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                                    else:
+                                        ok, buffer_jpg = cv2.imencode(".jpg", annotated)
+                                        frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                                except Exception:
+                                    ok, buffer_jpg = cv2.imencode(".jpg", annotated)
+                                    frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                            else:
+                                ok, buffer_jpg = cv2.imencode(".jpg", annotated)
+                                frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
                         except Exception:
                             frame_b64 = base64.b64encode(frame).decode("utf-8")
                         await manager.broadcast(json.dumps({"type": "frame", "frame": frame_b64}))
                 else:
-                    frame_b64 = base64.b64encode(frame).decode("utf-8")
-                    await manager.broadcast(json.dumps({"type": "frame", "frame": frame_b64}))
+                    if last_detections and (now - last_boxes_ts <= DETECT_BOX_HOLD):
+                        try:
+                            np_frame = np.frombuffer(frame, dtype=np.uint8)
+                            decoded = cv2.imdecode(np_frame, cv2.IMREAD_COLOR)
+                        except Exception:
+                            decoded = None
+                        if decoded is None:
+                            frame_b64 = base64.b64encode(frame).decode("utf-8")
+                        else:
+                            annotated = decoded.copy()
+                            for x1, y1, x2, y2, cls, conf, label in last_detections:
+                                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                text = f"{label} {conf:.2f}"
+                                (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                                text_y = y1 - 6 if y1 - 6 > th else y1 + th + 6
+                                cv2.rectangle(
+                                    annotated,
+                                    (x1, text_y - th - baseline),
+                                    (x1 + tw, text_y + baseline),
+                                    (0, 255, 0),
+                                    -1
+                                )
+                                cv2.putText(
+                                    annotated,
+                                    text,
+                                    (x1, text_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 0, 0),
+                                    1,
+                                    cv2.LINE_AA
+                                )
+                            # ═══════════════════════════════════════════════════════════════
+                            # UPDATE LATEST FRAME FOR AUTONOMOUS THREAD
+                            # ═══════════════════════════════════════════════════════════════
+                            latest_frame_for_pid = annotated
+                            
+                            # In autonomous mode, prefer annotated frame from PID thread
+                            if AUTONOMOUS_MODE and latest_annotated_frame is not None:
+                                try:
+                                    ok, buffer_jpg = cv2.imencode(".jpg", latest_annotated_frame)
+                                    if ok:
+                                        frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                                    else:
+                                        ok, buffer_jpg = cv2.imencode(".jpg", annotated)
+                                        frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                                except Exception:
+                                    ok, buffer_jpg = cv2.imencode(".jpg", annotated)
+                                    frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                            else:
+                                ok, buffer_jpg = cv2.imencode(".jpg", annotated)
+                                frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                        await manager.broadcast(json.dumps({"type": "frame", "frame": frame_b64}))
+                    else:
+                        # No recent detections - just encode raw frame
+                        # Update latest frame even without detections
+                        try:
+                            np_frame = np.frombuffer(frame, dtype=np.uint8)
+                            decoded = cv2.imdecode(np_frame, cv2.IMREAD_COLOR)
+                            if decoded is not None:
+                                latest_frame_for_pid = decoded
+                        except Exception:
+                            pass
+                        # In autonomous mode, prefer annotated frame from PID thread if available
+                        if AUTONOMOUS_MODE and latest_annotated_frame is not None:
+                            try:
+                                ok, buffer_jpg = cv2.imencode(".jpg", latest_annotated_frame)
+                                if ok:
+                                    frame_b64 = base64.b64encode(buffer_jpg).decode("utf-8")
+                                else:
+                                    frame_b64 = base64.b64encode(frame).decode("utf-8")
+                            except Exception:
+                                frame_b64 = base64.b64encode(frame).decode("utf-8")
+                        else:
+                            frame_b64 = base64.b64encode(frame).decode("utf-8")
+                        await manager.broadcast(json.dumps({"type": "frame", "frame": frame_b64}))
                 if not started_sent:
                     started_sent = True
                     await broadcast_camera_status("started")
@@ -305,8 +925,7 @@ HTML_TEMPLATE = r"""
     <!-- Status Bar -->
     <div class="px-6 pt-12 pb-2 flex justify-between items-center w-full">
         <div class="flex items-center space-x-2">
-            <span class="text-sm font-semibold">9:41</span>
-            <span class="material-icons-round text-xs">location_on</span>
+            <span id="currentTime" class="text-sm font-semibold">9:41</span>
         </div>
         <div class="flex items-center space-x-2">
             <span class="material-icons-round text-lg">signal_cellular_alt</span>
@@ -320,7 +939,7 @@ HTML_TEMPLATE = r"""
         <!-- Header -->
         <header class="flex justify-between items-center py-2 px-2">
             <div>
-                <h1 class="text-2xl font-bold tracking-tight">Otonom V2</h1>
+                <h1 class="text-2xl font-bold tracking-tight">Otonoum Car</h1>
                 <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">System Ready: <span class="text-green-500">Online</span></p>
             </div>
             <button class="w-10 h-10 rounded-full glass flex items-center justify-center text-primary">
@@ -333,9 +952,6 @@ HTML_TEMPLATE = r"""
             <img id="videoCanvas" alt="Live vehicle camera feed" class="w-full h-full object-cover opacity-60" src=""/>
             <div class="absolute inset-0 p-4 flex flex-col justify-between">
                 <div class="flex justify-between items-start">
-                    <div class="bg-black/50 backdrop-blur px-2 py-1 rounded-lg text-[10px] font-mono text-white/80 border border-white/20">
-                        CAM_FRONT_01
-                    </div>
                     <div class="flex space-x-2">
                         <div class="bg-red-500/80 px-2 py-1 rounded-lg text-[10px] font-bold text-white flex items-center animate-pulse">
                             <span class="w-1.5 h-1.5 bg-white rounded-full mr-1.5"></span> REC
@@ -343,14 +959,6 @@ HTML_TEMPLATE = r"""
                     </div>
                 </div>
                 <div class="flex justify-between items-end">
-                    <div class="glass px-3 py-1.5 rounded-xl flex items-center space-x-3">
-                        <div class="flex flex-col">
-                            <span class="text-[8px] uppercase tracking-wider text-white/50">Lat</span>
-                            <span class="text-[10px] font-mono text-white">41.0082° N</span>
-                        </div>
-                        <div class="flex flex-col">
-                            <span class="text-[8px] uppercase tracking-wider text-white/50">Lon</span>
-                            <span class="text-[10px] font-mono text-white">28.9784° E</span>
                         </div>
                     </div>
                 </div>
@@ -541,6 +1149,22 @@ HTML_TEMPLATE = r"""
         const connectionCloseBtn = document.getElementById('connectionCloseBtn');
         const hostUrlText = document.getElementById('hostUrlText');
         const cameraUrlText = document.getElementById('cameraUrlText');
+
+        // Update clock
+        function updateClock() {
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const timeString = `${hours}:${minutes}`;
+            const currentTimeElement = document.getElementById('currentTime');
+            if (currentTimeElement) {
+                currentTimeElement.textContent = timeString;
+            }
+        }
+        
+        // Update clock immediately and then every second
+        updateClock();
+        setInterval(updateClock, 1000);
 
         if (deviceIp && !deviceIp.value) {
             deviceIp.value = window.location.hostname || 'localhost';
@@ -857,6 +1481,8 @@ HTML_TEMPLATE = r"""
         function startJoystick(e) {
             if (autonomousMode) return;
             
+            e.preventDefault();  // Prevent screen scrolling
+            
             joystickActive = true;
             document.addEventListener('mousemove', moveJoystick);
             document.addEventListener('mouseup', endJoystick);
@@ -866,6 +1492,8 @@ HTML_TEMPLATE = r"""
         
         function moveJoystick(e) {
             if (!joystickActive || autonomousMode) return;
+            
+            e.preventDefault();  // Prevent screen scrolling
             
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -888,10 +1516,10 @@ HTML_TEMPLATE = r"""
             
             joystickHandle.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
             
-            // Send position
+            // Send position (X axis inverted to fix left/right confusion)
             sendToHost({
                 type: 'joystick',
-                x: deltaX / maxDistance,
+                x: -deltaX / maxDistance,  // Inverted X axis
                 y: -deltaY / maxDistance,
                 speed: currentSpeed
             });
@@ -1032,6 +1660,19 @@ HTML_TEMPLATE = r"""
         joystick.addEventListener('mousedown', startJoystick);
         joystick.addEventListener('touchstart', startJoystick);
         
+        // Add touch event prevention for velocity dial
+        if (velocityDial) {
+            velocityDial.addEventListener('touchstart', function(e) {
+                e.preventDefault();  // Prevent touch scrolling
+            });
+            
+            velocityDial.addEventListener('touchmove', function(e) {
+                if (velocityActive) {
+                    e.preventDefault();  // Prevent touch scrolling
+                }
+            });
+        }
+        
         function updateVelocityFromPointer(clientX, clientY, send) {
             if (!velocityDial || autonomousMode) return;
             const rect = velocityDial.getBoundingClientRect();
@@ -1054,6 +1695,7 @@ HTML_TEMPLATE = r"""
         
         if (velocityDial) {
             velocityDial.addEventListener('pointerdown', function(e) {
+                e.preventDefault();  // Prevent screen scrolling
                 velocityActive = true;
                 velocityDial.setPointerCapture(e.pointerId);
                 updateVelocityFromPointer(e.clientX, e.clientY, true);
@@ -1061,11 +1703,13 @@ HTML_TEMPLATE = r"""
             
             velocityDial.addEventListener('pointermove', function(e) {
                 if (!velocityActive) return;
+                e.preventDefault();  // Prevent screen scrolling
                 updateVelocityFromPointer(e.clientX, e.clientY, true);
             });
             
             const endVelocityDrag = function(e) {
                 if (!velocityActive) return;
+                e.preventDefault();  // Prevent screen scrolling
                 velocityActive = false;
                 if (velocityDial.hasPointerCapture(e.pointerId)) {
                     velocityDial.releasePointerCapture(e.pointerId);
@@ -1148,7 +1792,7 @@ HTML_TEMPLATE = r"""
             
             sendToHost({
                 type: 'joystick',
-                x: maxDistance ? x / maxDistance : 0,
+                x: maxDistance ? -x / maxDistance : 0,  // Inverted X axis to match mouse
                 y: maxDistance ? -y / maxDistance : 0,
                 speed: currentSpeed
             });
@@ -1202,7 +1846,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 
             elif message.get('type') == 'autonomous':
                 # Toggle autonomous mode
-                mode_cmd = "AUTO" if message['enabled'] else "MANUAL"
+                global AUTONOMOUS_MODE
+                AUTONOMOUS_MODE = message['enabled']
+                
+                if AUTONOMOUS_MODE:
+                    # Reset PID and start autonomous thread
+                    auto_steering.pid_reset()
+                    auto_steering.last_line_seen = time.time()
+                    start_autonomous_thread()
+                else:
+                    # Stop autonomous thread
+                    stop_autonomous_thread()
+                
+                mode_cmd = "AUTO" if AUTONOMOUS_MODE else "MANUAL"
                 await manager.broadcast(json.dumps({'type': 'command', 'value': mode_cmd}))
                 await send_host_command(mode_cmd)
                 
@@ -1230,6 +1886,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 else:
                     await manager.broadcast(json.dumps({'type': 'command', 'value': "S"}))
                     await send_host_command("S")
+
+            elif message.get('type') == 'ping':
+                # Respond with pong for latency measurement
+                timestamp = message.get('timestamp')
+                await websocket.send_text(json.dumps({
+                    'type': 'pong',
+                    'timestamp': timestamp
+                }))
 
             elif message.get('type') == 'connect':
                 host_ip = message.get('host_ip') or message.get('ip')
