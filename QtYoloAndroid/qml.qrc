@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/Main.qml</file>
+        <file>qml/ModernButton.qml</file>
+        <file>qml/MotorSpeedController.qml</file>
+        <file>qml/Joystick.qml</file>
+        <file>icons/luxury-car.png</file>
+        <file>icons/MaterialIcons-Regular.ttf</file>
+        <file>icons/SpaceGrotesk-Bold.ttf</file>
+        <file>assets/yolo11.param</file>
+        <file>assets/yolo11.bin</file>
+    </qresource>
+</RCC>
