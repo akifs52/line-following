@@ -196,8 +196,9 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
             + kAutoSpeedSmoothingAlpha * dynamicBase;
         dynamicBase = m_smoothedSpeed;
 
-        double speedLeft = qBound(-kAutoMaxSpeed, dynamicBase - pidOut, kAutoMaxSpeed);
-        double speedRight = qBound(-kAutoMaxSpeed, dynamicBase + pidOut, kAutoMaxSpeed);
+        // Swapped directions: left motor gets +pidOut, right motor gets -pidOut
+        double speedLeft = qBound(-kAutoMaxSpeed, dynamicBase + pidOut, kAutoMaxSpeed);
+        double speedRight = qBound(-kAutoMaxSpeed, dynamicBase - pidOut, kAutoMaxSpeed);
 
         speedLeft = applyDeadzone(speedLeft);
         speedRight = applyDeadzone(speedRight);
@@ -207,6 +208,15 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
         } else if (decision.error < -0.1) {
             m_searchDir = QStringLiteral("left");
         }
+
+        // Update visualization data
+        m_currentPidError = decision.error;
+        m_currentPidOutput = pidOut;
+        m_currentBaseSpeed = dynamicBase;
+        m_currentLeftSpeed = speedLeft;
+        m_currentRightSpeed = speedRight;
+        m_currentLineCenterX = 0.5 + (decision.error * 0.5); // Convert error to 0-1 range
+        emit pidDataChanged();
 
         setGuidanceMode(decision.mode);
         dispatchAutonomousCommand(

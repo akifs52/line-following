@@ -17,6 +17,13 @@ class RaspiControlClient : public QObject
     Q_PROPERTY(bool autonomousPending READ autonomousPending NOTIFY autonomousPendingChanged)
     Q_PROPERTY(QString autonomyStatus READ autonomyStatus NOTIFY autonomyStatusChanged)
     Q_PROPERTY(QString guidanceMode READ guidanceMode NOTIFY guidanceModeChanged)
+    // Autonomous visualization properties
+    Q_PROPERTY(double pidError READ pidError NOTIFY pidDataChanged)
+    Q_PROPERTY(double pidOutput READ pidOutput NOTIFY pidDataChanged)
+    Q_PROPERTY(double baseSpeed READ baseSpeed NOTIFY pidDataChanged)
+    Q_PROPERTY(double leftMotorSpeed READ leftMotorSpeed NOTIFY pidDataChanged)
+    Q_PROPERTY(double rightMotorSpeed READ rightMotorSpeed NOTIFY pidDataChanged)
+    Q_PROPERTY(double lineCenterX READ lineCenterX NOTIFY pidDataChanged)
 
 public:
     explicit RaspiControlClient(QObject *parent = nullptr);
@@ -28,6 +35,13 @@ public:
     bool autonomousPending() const;
     QString autonomyStatus() const;
     QString guidanceMode() const;
+    // Visualization getters
+    double pidError() const { return m_currentPidError; }
+    double pidOutput() const { return m_currentPidOutput; }
+    double baseSpeed() const { return m_currentBaseSpeed; }
+    double leftMotorSpeed() const { return m_currentLeftSpeed; }
+    double rightMotorSpeed() const { return m_currentRightSpeed; }
+    double lineCenterX() const { return m_currentLineCenterX; }
 
     Q_INVOKABLE void connectToHost(const QString &host, int port);
     Q_INVOKABLE void disconnectFromHost();
@@ -45,6 +59,7 @@ signals:
     void autonomousPendingChanged();
     void autonomyStatusChanged();
     void guidanceModeChanged();
+    void pidDataChanged(); // Emitted when PID visualization data updates
 
 private slots:
     void onConnected();
@@ -100,4 +115,11 @@ private:
     double m_estimatedHalfRoadWidth = -1.0;
     LineSide m_lastSeenLineSide = LineSide::Unknown;
     QString m_searchDir = QStringLiteral("left");
+    // Visualization data (updated each frame during autonomous)
+    double m_currentPidError = 0.0;
+    double m_currentPidOutput = 0.0;
+    double m_currentBaseSpeed = 0.0;
+    double m_currentLeftSpeed = 0.0;
+    double m_currentRightSpeed = 0.0;
+    double m_currentLineCenterX = 0.5; // Normalized 0-1
 };

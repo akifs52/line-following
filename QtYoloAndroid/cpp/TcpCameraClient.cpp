@@ -1,4 +1,5 @@
 #include "TcpCameraClient.h"
+#include "VideoItem.h"
 
 #include <QDebug>
 
@@ -185,29 +186,35 @@ void TcpCameraClient::extractJpegFrames()
 
 void TcpCameraClient::updateFrameSource()
 {
+    // Deprecated: base64 method causes flickering
+    // Use updateDisplay() with ImageProvider instead
+}
+
+void TcpCameraClient::setVideoItem(VideoItem *item)
+{
+    m_videoItem = item;
+}
+
+void TcpCameraClient::updateDisplay()
+{
     if (m_currentFrame.isNull()) {
+        qDebug() << "[TcpCameraClient] updateDisplay: frame is null";
+        return;
+    }
+    if (!m_videoItem) {
+        qDebug() << "[TcpCameraClient] updateDisplay: videoItem is null";
         return;
     }
 
-    // Convert QImage to base64 JPEG for QML Image source (faster than PNG)
-    QByteArray byteArray;
-    QBuffer buffer(&byteArray);
-    buffer.open(QIODevice::WriteOnly);
-    
-    // Use JPEG with 85% quality for good balance of size/quality
-    if (!m_currentFrame.save(&buffer, "JPEG", 85)) {
-        qDebug() << "[TcpCameraClient] Failed to save frame as JPEG";
-        return;
-    }
-    buffer.close();
+    qDebug() << "[TcpCameraClient] updateDisplay: sending frame" << m_currentFrame.width() << "x" << m_currentFrame.height();
 
-    QString base64Data = QString::fromLatin1(byteArray.toBase64());
-    m_frameSource = QStringLiteral("data:image/jpeg;base64,") + base64Data;
+    // Thread-safe update: VideoItem paint must be called from GUI thread
+    QImage frameCopy = m_currentFrame;
+    QMetaObject::invokeMethod(m_videoItem, [this, frameCopy]() {
+        m_videoItem->setFrame(frameCopy);
+    }, Qt::QueuedConnection);
     
-    qDebug() << "[TcpCameraClient] Frame source updated, bytes:" << byteArray.size()
-             << "base64:" << base64Data.length()
-             << "frame:" << m_currentFrame.width() << "x" << m_currentFrame.height();
-    
+    // Still emit signal for bindings that may depend on frame updates
     emit frameSourceChanged();
 }
 
@@ -247,7 +254,7 @@ void TcpCameraClient::onFrameUpdateTimer()
 
     if (!m_pendingFrame.isNull()) {
         m_currentFrame = m_pendingFrame;
-        updateFrameSource();
+        updateDisplay(); // Use ImageProvider instead of base64
         m_pendingFrame = QImage(); // Clear pending frame
     }
 }

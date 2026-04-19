@@ -9,6 +9,8 @@
 #include "FrameRingBuffer.h"
 #include "FrameWorker.h"
 
+class VideoItem;
+
 class TcpCameraClient : public QObject
 {
     Q_OBJECT
@@ -27,6 +29,7 @@ public:
 public slots:
     void connectToHost(const QString &host, int port);
     void disconnectFromHost();
+    void setVideoItem(VideoItem *item);
 
 signals:
     void frameSourceChanged();
@@ -50,6 +53,7 @@ private:
     void updateFrameSource();
     bool isValidJpeg(const QByteArray &data);
     void scheduleFrameUpdate(); // Schedule UI update at throttled rate
+    void updateDisplay(); // Update image provider with current frame
 
     QTcpSocket m_socket;
     QByteArray m_buffer;
@@ -57,7 +61,8 @@ private:
     FrameWorker *m_frameWorker;
     QImage m_currentFrame;
     QImage m_pendingFrame; // Frame waiting to be displayed
-    QString m_frameSource;
+    QString m_frameSource; // Kept for compatibility, now unused
+    VideoItem *m_videoItem = nullptr;
     QString m_lastError;
     QString m_host;
     int m_port = 0;

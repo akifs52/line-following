@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import QtMultimedia
+import Camera 1.0
 
 ApplicationWindow {
     id: root
@@ -392,26 +393,10 @@ ApplicationWindow {
                 border.width: 2
                 clip: true
 
-                Image {
-                    id: liveImage
-                    objectName: "liveImage"
+                VideoItem {
+                    id: liveVideo
+                    objectName: "liveVideo"
                     anchors.fill: parent
-                    fillMode: Image.PreserveAspectFit
-                    source: tcpCameraClient.frameSource
-                    cache: false
-                    smooth: true
-                    
-                    onStatusChanged: {
-                        if (status === Image.Error) {
-                            console.log("[QML] Image load error:", source.toString().substring(0, 50))
-                        } else if (status === Image.Ready) {
-                            console.log("[QML] Image ready, size:", paintedWidth, "x", paintedHeight)
-                        }
-                    }
-                    
-                    onSourceChanged: {
-                        console.log("[QML] Source changed, length:", source.toString().length)
-                    }
                 }
 
                 Canvas {
@@ -425,7 +410,9 @@ ApplicationWindow {
                         ctx.reset()
                         ctx.clearRect(0, 0, width, height)
 
-                        const rect = liveImage.contentRect || {x:0, y:0, width:liveImage.width, height:liveImage.height}
+                        const rect = liveVideo.contentRect || {x:0, y:0, width:liveVideo.width, height:liveVideo.height}
+                        
+                        // Draw detection boxes
                         for (let i = 0; i < boxes.length; ++i) {
                             const box = boxes[i]
                             const x = rect.x + box.x * rect.width
@@ -448,6 +435,73 @@ ApplicationWindow {
                             ctx.fillStyle = "#0b1323"
                             ctx.font = "bold 12px sans-serif"
                             ctx.fillText(label, x + 6, labelY + 14)
+                        }
+                        
+                        // Autonomous visualization (only when autonomous mode is active)
+                        if (controlClient.autonomousMode && boxes.length > 0) {
+                            const centerX = rect.x + controlClient.lineCenterX * rect.width
+                            const centerY = rect.y + rect.height * 0.8 // 80% down from top
+                            
+                            // Draw center point (where robot thinks the line is)
+                            ctx.beginPath()
+                            ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI)
+                            ctx.fillStyle = "#facc15" // Yellow
+                            ctx.fill()
+                            ctx.lineWidth = 2
+                            ctx.strokeStyle = "#ffffff"
+                            ctx.stroke()
+                            
+                            // Draw crosshair
+                            ctx.beginPath()
+                            ctx.moveTo(centerX - 15, centerY)
+                            ctx.lineTo(centerX + 15, centerY)
+                            ctx.moveTo(centerX, centerY - 15)
+                            ctx.lineTo(centerX, centerY + 15)
+                            ctx.strokeStyle = "#facc15"
+                            ctx.lineWidth = 2
+                            ctx.stroke()
+                            
+                            // Draw PID steering indicator
+                            const pidOut = controlClient.pidOutput
+                            const maxLineLength = rect.width * 0.3
+                            const lineLength = (pidOut / 100) * maxLineLength
+                            
+                            // Steering line (shows turn direction)
+                            ctx.beginPath()
+                            ctx.moveTo(centerX, centerY)
+                            ctx.lineTo(centerX - lineLength, centerY + 60) // Diagonal line
+                            ctx.strokeStyle = pidOut > 0 ? "#4ade80" : "#f87171" // Green for right, red for left
+                            ctx.lineWidth = 4
+                            ctx.stroke()
+                            
+                            // Draw motor speed bars
+                            const barY = rect.y + rect.height - 30
+                            const barWidth = 60
+                            const barHeight = 8
+                            const leftSpeed = controlClient.leftMotorSpeed
+                            const rightSpeed = controlClient.rightMotorSpeed
+                            
+                            // Left motor bar
+                            const leftBarColor = leftSpeed > 0 ? "#3b82f6" : "#ef4444"
+                            ctx.fillStyle = leftBarColor
+                            ctx.fillRect(rect.x + 10, barY, barWidth * Math.abs(leftSpeed) / 100, barHeight)
+                            
+                            // Right motor bar  
+                            const rightBarColor = rightSpeed > 0 ? "#3b82f6" : "#ef4444"
+                            ctx.fillStyle = rightBarColor
+                            ctx.fillRect(rect.x + rect.width - 10 - barWidth * Math.abs(rightSpeed) / 100, barY, barWidth * Math.abs(rightSpeed) / 100, barHeight)
+                            
+                            // Motor labels
+                            ctx.fillStyle = "#ffffff"
+                            ctx.font = "bold 11px sans-serif"
+                            ctx.fillText("L: " + Math.round(leftSpeed), rect.x + 10, barY - 5)
+                            ctx.fillText("R: " + Math.round(rightSpeed), rect.x + rect.width - 50, barY - 5)
+                            
+                            // PID Error text
+                            ctx.fillStyle = "#facc15"
+                            ctx.font = "bold 14px sans-serif"
+                            const errorText = "Err: " + controlClient.pidError.toFixed(2)
+                            ctx.fillText(errorText, centerX - 30, rect.y + 20)
                         }
                     }
                 }

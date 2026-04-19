@@ -11,6 +11,7 @@ SOURCES += \
     cpp/HapticsManager.cpp \
     cpp/RaspiControlClient.cpp \
     cpp/TcpCameraClient.cpp \
+    cpp/VideoItem.cpp \
     cpp/YoloEngine.cpp
 
 HEADERS += \
@@ -20,6 +21,7 @@ HEADERS += \
     cpp/HapticsManager.h \
     cpp/RaspiControlClient.h \
     cpp/TcpCameraClient.h \
+    cpp/VideoItem.h \
     cpp/YoloEngine.h
 
 RESOURCES += qml.qrc

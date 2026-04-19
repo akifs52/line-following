@@ -10,6 +10,7 @@
 #include "cpp/HapticsManager.h"
 #include "cpp/RaspiControlClient.h"
 #include "cpp/TcpCameraClient.h"
+#include "cpp/VideoItem.h"
 #include "cpp/YoloEngine.h"
 
 #if defined(Q_OS_ANDROID)
@@ -36,6 +37,9 @@ int main(int argc, char *argv[])
         RaspiControlClient controlClient;
         TcpCameraClient tcpCameraClient;
         YoloEngine yoloEngine;
+        
+        // Register VideoItem type for QML
+        qmlRegisterType<VideoItem>("Camera", 1, 0, "VideoItem");
 
         // Connect TCP camera to YOLO engine
         QObject::connect(
@@ -66,31 +70,25 @@ int main(int argc, char *argv[])
         if (engine.rootObjects().isEmpty()) {
             exitCode = -1;
         } else {
-            const auto bindVideoSink = [&engine, &cameraWorker]() {
+            // Connect VideoItem to TcpCameraClient for frame display
+            const auto bindVideoItem = [&engine, &tcpCameraClient]() {
                 QObject *rootObject = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
                 if (!rootObject) {
                     return;
                 }
 
-                QObject *liveOutput = rootObject->findChild<QObject *>(QStringLiteral("liveOutput"));
-                if (!liveOutput) {
+                VideoItem *liveVideo = rootObject->findChild<VideoItem *>(QStringLiteral("liveVideo"));
+                if (!liveVideo) {
+                    qWarning() << "[Main] liveVideo VideoItem not found";
                     return;
                 }
 
-                QVideoSink *videoSink = qvariant_cast<QVideoSink *>(liveOutput->property("videoSink"));
-                if (!videoSink) {
-                    QObject *sinkObject = qvariant_cast<QObject *>(liveOutput->property("videoSink"));
-                    videoSink = qobject_cast<QVideoSink *>(sinkObject);
-                }
-
-                cameraWorker.attachVideoSink(videoSink);
+                tcpCameraClient.setVideoItem(liveVideo);
+                qDebug() << "[Main] VideoItem connected to TcpCameraClient";
             };
 
-            bindVideoSink();
-            QTimer::singleShot(0, &app, bindVideoSink);
-
-            // Note: Old CameraWorker/VideoOutput code removed - using TCP camera instead
-            Q_UNUSED(cameraWorker)
+            bindVideoItem();
+            QTimer::singleShot(100, &app, bindVideoItem); // Retry after 100ms to ensure QML is fully loaded
             
             exitCode = app.exec();
         }

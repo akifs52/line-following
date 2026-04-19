@@ -187,8 +187,11 @@ void YoloEngine::updateModelLoadedState()
 #if defined(Q_OS_ANDROID)
     const bool loaded = hasAssets && ensureModelLoaded();
 #else
-    Q_UNUSED(hasAssets);
-    const bool loaded = false;
+    // Desktop: Check if assets exist but skip NCNN loading (desktop testing mode)
+    const bool loaded = hasAssets; // Desktop'ta model var ama NCNN yok, sadece kamera göster
+    if (hasAssets) {
+        qInfo() << "Desktop mode: Assets found, NCNN inference disabled (Android only)";
+    }
 #endif
 
     if (!hasAssets) {
@@ -206,6 +209,11 @@ void YoloEngine::updateModelLoadedState()
     if (!loaded) {
         qWarning() << "model not ready; hasAssets=" << hasAssets << m_lastLoadError;
     }
+#if !defined(Q_OS_ANDROID)
+    else {
+        qInfo() << "Desktop testing mode: Camera stream only, YOLO detection disabled";
+    }
+#endif
 
 #if defined(Q_OS_ANDROID)
     if (loaded) {
