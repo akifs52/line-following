@@ -10,7 +10,8 @@
 #include <cstring>
 #include <cstdint>
 
-#if defined(Q_OS_ANDROID)
+// NCNN includes for all platforms with GPU support
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
 #include <ncnn/datareader.h>
 #include <ncnn/gpu.h>
 #include <ncnn/layer.h>
@@ -20,7 +21,8 @@ namespace {
 constexpr float kMinThreshold = 0.001f;
 constexpr float kMaxThreshold = 0.99f;
 
-#if defined(Q_OS_ANDROID)
+// NCNN constants for all platforms
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
 constexpr int kInputSize = 640;
 constexpr float kNmsThreshold = 0.45f;
 constexpr float kNormVals[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
@@ -34,7 +36,7 @@ YoloEngine::YoloEngine(QObject *parent)
 {
     m_runtime.start();
     connect(&m_futureWatcher, &QFutureWatcher<InferenceResult>::finished, this, &YoloEngine::finishInference);
-#if defined(Q_OS_ANDROID)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
     m_modelRetryTimer.setInterval(kModelRetryIntervalMs);
     m_modelRetryTimer.setSingleShot(false);
     connect(&m_modelRetryTimer, &QTimer::timeout, this, [this] {
@@ -184,15 +186,11 @@ void YoloEngine::updateModelLoadedState()
     const bool hasAssets = hasPayload(QStringLiteral(":/assets/yolo11.param"))
         && hasPayload(QStringLiteral(":/assets/yolo11.bin"));
 
-#if defined(Q_OS_ANDROID)
+// Load NCNN model on all platforms (Android, iOS, macOS, Windows with GPU support)
     const bool loaded = hasAssets && ensureModelLoaded();
-#else
-    // Desktop: Check if assets exist but skip NCNN loading (desktop testing mode)
-    const bool loaded = hasAssets; // Desktop'ta model var ama NCNN yok, sadece kamera göster
-    if (hasAssets) {
-        qInfo() << "Desktop mode: Assets found, NCNN inference disabled (Android only)";
+    if (!loaded && hasAssets) {
+        qWarning() << "Model assets found but NCNN loading failed:" << m_lastLoadError;
     }
-#endif
 
     if (!hasAssets) {
         setModelStatus(QStringLiteral("Model assets: missing"));
@@ -209,13 +207,8 @@ void YoloEngine::updateModelLoadedState()
     if (!loaded) {
         qWarning() << "model not ready; hasAssets=" << hasAssets << m_lastLoadError;
     }
-#if !defined(Q_OS_ANDROID)
-    else {
-        qInfo() << "Desktop testing mode: Camera stream only, YOLO detection disabled";
-    }
-#endif
 
-#if defined(Q_OS_ANDROID)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
     if (loaded) {
         m_modelRetryTimer.stop();
     } else if (!m_modelRetryTimer.isActive() && m_modelRetryAttempts < kMaxModelRetryAttempts) {
@@ -255,7 +248,7 @@ void YoloEngine::startInference(const QImage &frame)
         InferenceResult result;
         result.frameSize = frameCopy.size();
 
-#if defined(Q_OS_ANDROID)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
         result.detections = runNcnnInference(frameCopy, scoreThreshold);
 #else
         Q_UNUSED(scoreThreshold);
@@ -297,7 +290,7 @@ void YoloEngine::finishInference()
     startInference(nextFrame);
 }
 
-#if defined(Q_OS_ANDROID)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
 bool YoloEngine::ensureModelLoaded()
 {
     if (m_netInitialized) {
@@ -389,9 +382,9 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
         return detections;
     }
 
-    const float scale = std::min(float(kInputSize) / float(srcW), float(kInputSize) / float(srcH));
-    const int resizedW = std::max(1, int(std::round(float(srcW) * scale)));
-    const int resizedH = std::max(1, int(std::round(float(srcH) * scale)));
+    const float scale = (std::min)(float(kInputSize) / float(srcW), float(kInputSize) / float(srcH));
+    const int resizedW = (std::max)(1, int(std::round(float(srcW) * scale)));
+    const int resizedH = (std::max)(1, int(std::round(float(srcH) * scale)));
 
     ncnn::Mat resized = ncnn::Mat::from_pixels_resize(
         rgbFrame.constBits(),
@@ -493,13 +486,13 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
 
 float YoloEngine::intersectionArea(const Detection &a, const Detection &b)
 {
-    const float x1 = std::max(float(a.rect.left()), float(b.rect.left()));
-    const float y1 = std::max(float(a.rect.top()), float(b.rect.top()));
-    const float x2 = std::min(float(a.rect.right()), float(b.rect.right()));
-    const float y2 = std::min(float(a.rect.bottom()), float(b.rect.bottom()));
+    const float x1 = (std::max)(float(a.rect.left()), float(b.rect.left()));
+    const float y1 = (std::max)(float(a.rect.top()), float(b.rect.top()));
+    const float x2 = (std::min)(float(a.rect.right()), float(b.rect.right()));
+    const float y2 = (std::min)(float(a.rect.bottom()), float(b.rect.bottom()));
 
-    const float w = std::max(0.0f, x2 - x1);
-    const float h = std::max(0.0f, y2 - y1);
+    const float w = (std::max)(0.0f, x2 - x1);
+    const float h = (std::max)(0.0f, y2 - y1);
     return w * h;
 }
 

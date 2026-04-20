@@ -28,20 +28,27 @@ RESOURCES += qml.qrc
 
 INCLUDEPATH += $$PWD/cpp
 
-android {
-    INCLUDEPATH += $$PWD/3rdparty/ncnn/include
+# NCNN paths for all platforms (using actual 3rdparty folder names)
+NCNN_VERSION = 20260113
 
-    NCNN_LIBS_ROOT = $$PWD/3rdparty/ncnn/libs
+# Android NCNN with GPU/Vulkan support
+android {
+    NCNN_ANDROID_ROOT = $$PWD/3rdparty/ncnn-$$NCNN_VERSION-android-vulkan/ncnn-$$NCNN_VERSION-android-vulkan
+
     NCNN_ABI = $$ANDROID_TARGET_ARCH
     isEmpty(NCNN_ABI): NCNN_ABI = $$ANDROID_ABI
     isEmpty(NCNN_ABI): NCNN_ABI = $$QT_ARCH
-    NCNN_LIB_DIR = $$NCNN_LIBS_ROOT/$$NCNN_ABI
+    NCNN_LIB_DIR = $$NCNN_ANDROID_ROOT/$$NCNN_ABI/lib
+    NCNN_INCLUDE_DIR = $$NCNN_ANDROID_ROOT/$$NCNN_ABI/include
 
     !exists($$NCNN_LIB_DIR/libncnn.a) {
         message(ncnn libs not found for ABI '$$NCNN_ABI', fallback to arm64-v8a)
         NCNN_ABI = arm64-v8a
-        NCNN_LIB_DIR = $$NCNN_LIBS_ROOT/$$NCNN_ABI
+        NCNN_LIB_DIR = $$NCNN_ANDROID_ROOT/$$NCNN_ABI/lib
+        NCNN_INCLUDE_DIR = $$NCNN_ANDROID_ROOT/$$NCNN_ABI/include
     }
+
+    INCLUDEPATH += $$NCNN_INCLUDE_DIR
 
     LIBS += $$NCNN_LIB_DIR/libncnn.a \
             $$NCNN_LIB_DIR/libglslang.a \
@@ -60,6 +67,64 @@ android {
     ANDROID_PACKAGE_SOURCE_DIR = $$PWD/android
     ANDROID_MIN_SDK_VERSION = 24
     ANDROID_TARGET_SDK_VERSION = 33
+}
+
+# iOS NCNN with GPU/Metal support
+ios {
+    NCNN_IOS_ROOT = $$PWD/3rdparty/ncnn-$$NCNN_VERSION-ios-vulkan
+
+    # iOS framework paths
+    LIBS += -F$$NCNN_IOS_ROOT \
+            -framework ncnn \
+            -framework openmp \
+            -framework Metal \
+            -framework MetalPerformanceShaders \
+            -framework Foundation
+
+    INCLUDEPATH += $$NCNN_IOS_ROOT/ncnn.framework/Headers
+
+    QMAKE_LFLAGS += -Wl,-rpath,@executable_path/Frameworks
+}
+
+# macOS NCNN with GPU/Metal support
+macx {
+    NCNN_MACOS_ROOT = $$PWD/3rdparty/ncnn-$$NCNN_VERSION-macos-vulkan
+
+    # macOS framework paths
+    LIBS += -F$$NCNN_MACOS_ROOT \
+            -framework ncnn \
+            -framework openmp \
+            -framework Metal \
+            -framework MetalPerformanceShaders \
+            -framework Foundation
+
+    INCLUDEPATH += $$NCNN_MACOS_ROOT/ncnn.framework/Headers
+
+    QMAKE_LFLAGS += -Wl,-rpath,@executable_path/../Frameworks
+}
+
+# Windows NCNN with GPU/Vulkan support
+win32 {
+    NCNN_WINDOWS_ROOT = $$PWD/3rdparty/ncnn-$$NCNN_VERSION-windows-vs2022/ncnn-$$NCNN_VERSION-windows-vs2022
+
+    # Windows x64 library paths
+    NCNN_LIB_DIR = $$NCNN_WINDOWS_ROOT/x64/lib
+    NCNN_INCLUDE_DIR = $$NCNN_WINDOWS_ROOT/x64/include
+
+    INCLUDEPATH += $$NCNN_INCLUDE_DIR
+
+    LIBS += -L$$NCNN_LIB_DIR \
+            -lncnn \
+            -lglslang \
+            -lSPIRV \
+            -lOSDependent \
+            -lMachineIndependent \
+            -lGenericCodeGen \
+            -lglslang-default-resource-limits
+
+
+    # Vulkan SDK library path for MinGW
+    LIBS += -LD:/VulkanSDK/1.4.341.1/Lib -lvulkan-1
 }
 
 DISTFILES += \

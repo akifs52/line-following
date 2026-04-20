@@ -13,7 +13,8 @@
 #include <QVariantList>
 #include <QVector>
 
-#if defined(Q_OS_ANDROID)
+// NCNN includes for all platforms with GPU support
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
 #include <ncnn/net.h>
 #endif
 
@@ -73,7 +74,7 @@ private:
     void finishInference();
     QVariantList toVariantList(const QVector<Detection> &detections, const QSize &frameSize) const;
 
-#if defined(Q_OS_ANDROID)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
     bool ensureModelLoaded();
     QVector<Detection> runNcnnInference(const QImage &frame, float scoreThreshold) const;
     static float intersectionArea(const Detection &a, const Detection &b);
@@ -95,7 +96,7 @@ private:
     bool m_usingVulkan = false;
     QString m_lastLoadError;
 
-#if defined(Q_OS_ANDROID)
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
     mutable ncnn::Net m_net;
     mutable QMutex m_inferenceMutex;
     bool m_netInitialized = false;
