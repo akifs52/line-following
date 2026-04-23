@@ -227,6 +227,12 @@ def handle_command(data):
         (left if INVERT_STEERING else right)()
     elif data == "stop" or data == "S":
         stop()
+    elif data == "SHUTDOWN":
+        print("[SYSTEM] Shutdown komutu alındı! Raspberry kapatılıyor...")
+        stop()
+        time.sleep(0.5)
+        import os
+        os.system("sudo shutdown -h now")
     else:
         print(f"[UYARI] Bilinmeyen komut: {data}")
 

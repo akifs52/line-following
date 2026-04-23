@@ -142,6 +142,11 @@ bool RaspiControlClient::sendStop()
     return sendRawCommand(QStringLiteral("S"), false);
 }
 
+bool RaspiControlClient::sendShutdown()
+{
+    return sendRawCommand(QStringLiteral("SHUTDOWN"), false);
+}
+
 void RaspiControlClient::setAutonomousEnabled(bool enabled)
 {
     if (!enabled) {

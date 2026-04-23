@@ -45,9 +45,23 @@ Item {
         released();
     }
 
+    function setPositionFromGamepad(gx, gy) {
+        // Set position from gamepad/gamecontroller (gx, gy range: -1.0 to 1.0)
+        var dx = gx * maxOffset;
+        var dy = gy * maxOffset;
+        handle.x = centerX - handle.width * 0.5 + dx;
+        handle.y = centerY - handle.height * 0.5 + dy;
+        xValue = gx;
+        yValue = gy;
+        moved(xValue, yValue);
+    }
+
     onWidthChanged: resetHandle()
     onHeightChanged: resetHandle()
-    Component.onCompleted: resetHandle()
+    Component.onCompleted: {
+        resetHandle()
+        forceActiveFocus()
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -125,6 +139,53 @@ Item {
 
     }
 
+    // Keyboard controls (WASD) - prevent text input
+    Keys.enabled: true
+    Keys.forwardTo: []
+    Keys.priority: Keys.BeforeItem
+
+    Keys.onPressed: function(event) {
+        var dx = 0
+        var dy = 0
+        var keyActive = false
+
+        if (event.key === Qt.Key_W || event.key === Qt.Key_Up) {
+            dy = -maxOffset
+            keyActive = true
+        } else if (event.key === Qt.Key_S || event.key === Qt.Key_Down) {
+            dy = maxOffset
+            keyActive = true
+        }
+
+        if (event.key === Qt.Key_A || event.key === Qt.Key_Left) {
+            dx = -maxOffset
+            keyActive = true
+        } else if (event.key === Qt.Key_D || event.key === Qt.Key_Right) {
+            dx = maxOffset
+            keyActive = true
+        }
+
+        if (keyActive) {
+            root.active = true
+            handle.x = centerX - handle.width * 0.5 + dx
+            handle.y = centerY - handle.height * 0.5 + dy
+            xValue = dx / maxOffset
+            yValue = dy / maxOffset
+            moved(xValue, yValue)
+        }
+        event.accepted = true
+    }
+
+    Keys.onReleased: function(event) {
+        if (event.key === Qt.Key_W || event.key === Qt.Key_Up ||
+            event.key === Qt.Key_S || event.key === Qt.Key_Down ||
+            event.key === Qt.Key_A || event.key === Qt.Key_Left ||
+            event.key === Qt.Key_D || event.key === Qt.Key_Right) {
+            root.resetHandle()
+            event.accepted = true
+        }
+    }
+
     MouseArea {
         anchors.fill: parent
         preventStealing: true
@@ -132,6 +193,7 @@ Item {
 
         onPressed: {
             if (typeof haptics !== "undefined" && haptics) haptics.vibrateMedium();
+            root.forceActiveFocus();
             root.active = true;
             root.updateFromPoint(mouse.x, mouse.y);
         }

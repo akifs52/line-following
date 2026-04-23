@@ -24,13 +24,64 @@ ApplicationWindow {
     height: Screen.height < 800 ? Screen.height : 900
     minimumWidth: 340
     minimumHeight: 680
-    title: "Qt YOLO Android"
+    title: "Line Following"
+
     color: "#0f172a"
+
+    // Global WASD controls that work even when TextFields have focus
+    Keys.priority: Keys.BeforeItem
+
+    Keys.onPressed: function(event) {
+        if (!autonomousBusy && joystick) {
+            if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
+                event.key === Qt.Key_S || event.key === Qt.Key_D ||
+                event.key === Qt.Key_Up || event.key === Qt.Key_Down ||
+                event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                joystick.Keys.onPressed(event)
+                event.accepted = true
+            }
+        }
+    }
+
+    Keys.onReleased: function(event) {
+        if (!autonomousBusy && joystick) {
+            if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
+                event.key === Qt.Key_S || event.key === Qt.Key_D ||
+                event.key === Qt.Key_Up || event.key === Qt.Key_Down ||
+                event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                joystick.Keys.onReleased(event)
+                event.accepted = true
+            }
+        }
+    }
 
     property var detectionBoxes: []
     property string uiErrorText: ""
     property bool pendingConnect: false
     readonly property bool autonomousBusy: controlClient.autonomousMode || controlClient.autonomousPending
+
+    // Gamepad connections
+    Connections {
+        target: gamepad
+        enabled: !root.autonomousBusy
+
+        function onJoystickMoved(x, y) {
+            // DPAD moves the virtual joystick
+            if (joystick && !root.autonomousBusy) {
+                joystick.setPositionFromGamepad(x, y)
+            }
+        }
+
+        function onMotorSpeedChangeRequested(delta) {
+            // L2/R2 change motor speed
+            if (motorSpeed) {
+                var newValue = motorSpeed.value + delta
+                if (newValue < motorSpeed.from) newValue = motorSpeed.from
+                if (newValue > motorSpeed.to) newValue = motorSpeed.to
+                motorSpeed.value = newValue
+            }
+        }
+    }
 
     function parsePort(value, fallbackValue) {
         const parsed = parseInt(value)
@@ -331,7 +382,7 @@ ApplicationWindow {
                         spacing: 2
 
                         Text {
-                            text: "Qt Yolo Android"
+                            text: "Line Following"
                             color: "#f8fafc"
                             font.pixelSize: 27
                             font.bold: true
@@ -588,6 +639,7 @@ ApplicationWindow {
                             Layout.preferredHeight: 196
 
                             Joystick {
+                                id: joystick
                                 anchors.centerIn: parent
                                 width: 156
                                 height: 156
@@ -644,7 +696,7 @@ ApplicationWindow {
                                 Text {
                                     text: controlClient.autonomousPending
                                           ? "Armed"
-                                          : (controlClient.autonomousMode ? "Autonomous" : "Manual")
+                                          : (controlClient.autonomousMode ? "Auto" : "Manual")
                                     color: controlClient.autonomousPending
                                            ? "#facc15"
                                            : (controlClient.autonomousMode ? "#f87171" : "#60a5fa")
@@ -802,6 +854,16 @@ ApplicationWindow {
                                 visible: raspiIpField.text.length === 0
                             }
                         }
+
+                        // Block WASD keys - prevent typing in this field
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
+                                event.key === Qt.Key_S || event.key === Qt.Key_D ||
+                                event.key === Qt.Key_Up || event.key === Qt.Key_Down ||
+                                event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                                event.accepted = true
+                            }
+                        }
                     }
 
                     RowLayout {
@@ -845,6 +907,17 @@ ApplicationWindow {
                                     visible: hostPortField.text.length === 0
                                 }
                             }
+
+                            // Block WASD keys - prevent typing in this field
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
+                                    event.key === Qt.Key_S || event.key === Qt.Key_D ||
+                                    event.key === Qt.Key_Up || event.key === Qt.Key_Down ||
+                                    event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                                    event.accepted = true
+                                }
+                            }
+                            validator: IntValidator { bottom: 1; top: 65535 }
                         }
 
                         TextField {
@@ -884,6 +957,17 @@ ApplicationWindow {
                                     visible: camPortField.text.length === 0
                                 }
                             }
+
+                            // Block WASD keys - prevent typing in this field
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
+                                    event.key === Qt.Key_S || event.key === Qt.Key_D ||
+                                    event.key === Qt.Key_Up || event.key === Qt.Key_Down ||
+                                    event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                                    event.accepted = true
+                                }
+                            }
+                            validator: IntValidator { bottom: 1; top: 65535 }
                         }
                     }
 
@@ -913,6 +997,21 @@ ApplicationWindow {
                             borderColor: root.connectButtonBorderColor()
                             textColor: root.connectButtonTextColor()
                             onClicked: root.handleConnectionButtonClick()
+                        }
+
+                        ModernButton {
+                            visible: controlClient.connected
+                            Layout.preferredWidth: 31
+                            text: ""
+                            icon: "\ue8ac"
+                            iconFont: materialIcons.name
+                            baseColor: "#3b1d1d"
+                            hoverColor: "#4a2525"
+                            pressedColor: "#7f1d1d"
+                            borderColor: "#9f3a3a"
+                            onClicked: {
+                                controlClient.sendShutdown()
+                            }
                         }
                     }
                 }

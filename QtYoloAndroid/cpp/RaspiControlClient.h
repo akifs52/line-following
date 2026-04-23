@@ -48,6 +48,7 @@ public:
     Q_INVOKABLE bool sendSpeed(int value);
     Q_INVOKABLE bool sendJoystick(double x, double y, int speedValue);
     Q_INVOKABLE bool sendStop();
+    Q_INVOKABLE bool sendShutdown();
     Q_INVOKABLE void setAutonomousEnabled(bool enabled);
     Q_INVOKABLE void updateDetections(const QVariantList &boxes);
 
