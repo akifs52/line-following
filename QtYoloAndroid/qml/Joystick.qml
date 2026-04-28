@@ -63,6 +63,29 @@ Item {
         forceActiveFocus()
     }
 
+    // PS5 Controller / Gamepad support
+    Connections {
+        target: gamepad
+        enabled: root.enabled
+
+        function onJoystickMoved(x, y) {
+            // DPAD or analog stick moves the joystick
+            root.active = (x !== 0 || y !== 0)
+            setPositionFromGamepad(x, y)
+        }
+
+        function onAxisValuesChanged(x, y) {
+            // Analog stick input (continuous)
+            if (Math.abs(x) > 0.05 || Math.abs(y) > 0.05) {
+                root.active = true
+                setPositionFromGamepad(x, -y)
+            } else if (root.active) {
+                root.active = false
+                resetHandle()
+            }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         radius: width * 0.5

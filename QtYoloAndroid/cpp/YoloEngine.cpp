@@ -474,7 +474,8 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
     QVector<int> picked;
     nmsSortedBboxes(proposals, picked, kNmsThreshold);
 
-    const qsizetype maxDetections = 100;
+    // En fazla 2 tespit al, en yüksek confidence değerine sahip olanlar
+    const qsizetype maxDetections = 2;
     const qsizetype keepCount = std::min<qsizetype>(picked.size(), maxDetections);
     detections.reserve(keepCount);
     for (qsizetype i = 0; i < keepCount; ++i) {

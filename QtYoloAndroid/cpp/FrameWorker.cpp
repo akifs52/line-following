@@ -44,7 +44,6 @@ void FrameWorker::run()
         QImage image = QImage::fromData(jpeg, "JPEG");
 
         if (!image.isNull()) {
-            qDebug() << "[FrameWorker] Frame decoded:" << image.width() << "x" << image.height();
             emit frameReady(image);
         } else {
             qDebug() << "[FrameWorker] Failed to decode JPEG frame, size:" << jpeg.size();

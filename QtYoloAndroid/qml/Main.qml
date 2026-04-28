@@ -490,69 +490,90 @@ ApplicationWindow {
                         
                         // Autonomous visualization (only when autonomous mode is active)
                         if (controlClient.autonomousMode && boxes.length > 0) {
-                            const centerX = rect.x + controlClient.lineCenterX * rect.width
-                            const centerY = rect.y + rect.height * 0.8 // 80% down from top
-                            
-                            // Draw center point (where robot thinks the line is)
+                            // ═══════════════════════════════════════════════════
+                            // GÖRSELLEŞTİRME - BASİT VE NET
+                            // ═══════════════════════════════════════════════════
+
+                            // Orta çizgi (referans)
+                            const centerX = rect.x + rect.width * 0.5
+
+                            // Target: Aracın gitmesi gereken nokta (yeşil ok)
+                            const targetX = rect.x + controlClient.lineCenterX * rect.width
+
+                            // ═══ ORTA REFERANS ÇİZGİSİ (beyaz kesikli) ═══
                             ctx.beginPath()
-                            ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI)
-                            ctx.fillStyle = "#facc15" // Yellow
+                            ctx.setLineDash([8, 6])
+                            ctx.moveTo(centerX, rect.y)
+                            ctx.lineTo(centerX, rect.y + rect.height)
+                            ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"
+                            ctx.lineWidth = 1
+                            ctx.stroke()
+                            ctx.setLineDash([])
+
+                            // ═══ TARGET İŞARETİ (yeşil - gitmek istediğimiz yer) ═══
+                            // Dikey çizgi
+                            ctx.beginPath()
+                            ctx.moveTo(targetX, rect.y + rect.height * 0.5)
+                            ctx.lineTo(targetX, rect.y + rect.height * 0.85)
+                            ctx.strokeStyle = "#22c55e"
+                            ctx.lineWidth = 3
+                            ctx.stroke()
+                            
+                            // Ok ucu (üçgen)
+                            const arrowSize = 12
+                            ctx.beginPath()
+                            ctx.moveTo(targetX, rect.y + rect.height * 0.5 - arrowSize)
+                            ctx.lineTo(targetX - arrowSize, rect.y + rect.height * 0.5 + 5)
+                            ctx.lineTo(targetX + arrowSize, rect.y + rect.height * 0.5 + 5)
+                            ctx.closePath()
+                            ctx.fillStyle = "#22c55e"
                             ctx.fill()
-                            ctx.lineWidth = 2
-                            ctx.strokeStyle = "#ffffff"
-                            ctx.stroke()
                             
-                            // Draw crosshair
+                            // Target noktası (daire)
                             ctx.beginPath()
-                            ctx.moveTo(centerX - 15, centerY)
-                            ctx.lineTo(centerX + 15, centerY)
-                            ctx.moveTo(centerX, centerY - 15)
-                            ctx.lineTo(centerX, centerY + 15)
-                            ctx.strokeStyle = "#facc15"
-                            ctx.lineWidth = 2
+                            ctx.arc(targetX, rect.y + rect.height * 0.82, 6, 0, 2 * Math.PI)
+                            ctx.fillStyle = "#22c55e"
+                            ctx.fill()
+                            ctx.strokeStyle = "white"
+                            ctx.lineWidth = 1.5
                             ctx.stroke()
                             
-                            // Draw PID steering indicator
-                            const pidOut = controlClient.pidOutput
-                            const maxLineLength = rect.width * 0.3
-                            const lineLength = (pidOut / 100) * maxLineLength
+                            // Mesafe göstergesi (orta çizgi ile target arası)
+                            if (Math.abs(targetX - centerX) > 3) {
+                                ctx.beginPath()
+                                ctx.setLineDash([3, 4])
+                                ctx.moveTo(centerX, rect.y + rect.height * 0.7)
+                                ctx.lineTo(targetX, rect.y + rect.height * 0.7)
+                                ctx.strokeStyle = "rgba(255, 255, 255, 0.4)"
+                                ctx.lineWidth = 1
+                                ctx.stroke()
+                                ctx.setLineDash([])
+                                
+                                // Ok yönü
+                                const midX = (centerX + targetX) / 2
+                                const dir = targetX > centerX ? 1 : -1
+                                ctx.beginPath()
+                                ctx.moveTo(midX, rect.y + rect.height * 0.7 - 5)
+                                ctx.lineTo(midX + dir * 8, rect.y + rect.height * 0.7)
+                                ctx.lineTo(midX, rect.y + rect.height * 0.7 + 5)
+                                ctx.fillStyle = "rgba(255, 255, 255, 0.6)"
+                                ctx.fill()
+                            }
                             
-                            // Steering line (shows turn direction)
-                            ctx.beginPath()
-                            ctx.moveTo(centerX, centerY)
-                            ctx.lineTo(centerX - lineLength, centerY + 60) // Diagonal line
-                            ctx.strokeStyle = pidOut > 0 ? "#4ade80" : "#f87171" // Green for right, red for left
-                            ctx.lineWidth = 4
-                            ctx.stroke()
-                            
-                            // Draw motor speed bars
-                            const barY = rect.y + rect.height - 30
-                            const barWidth = 60
-                            const barHeight = 8
-                            const leftSpeed = controlClient.leftMotorSpeed
-                            const rightSpeed = controlClient.rightMotorSpeed
-                            
-                            // Left motor bar
-                            const leftBarColor = leftSpeed > 0 ? "#3b82f6" : "#ef4444"
-                            ctx.fillStyle = leftBarColor
-                            ctx.fillRect(rect.x + 10, barY, barWidth * Math.abs(leftSpeed) / 100, barHeight)
-                            
-                            // Right motor bar  
-                            const rightBarColor = rightSpeed > 0 ? "#3b82f6" : "#ef4444"
-                            ctx.fillStyle = rightBarColor
-                            ctx.fillRect(rect.x + rect.width - 10 - barWidth * Math.abs(rightSpeed) / 100, barY, barWidth * Math.abs(rightSpeed) / 100, barHeight)
-                            
-                            // Motor labels
-                            ctx.fillStyle = "#ffffff"
-                            ctx.font = "bold 11px sans-serif"
-                            ctx.fillText("L: " + Math.round(leftSpeed), rect.x + 10, barY - 5)
-                            ctx.fillText("R: " + Math.round(rightSpeed), rect.x + rect.width - 50, barY - 5)
-                            
-                            // PID Error text
-                            ctx.fillStyle = "#facc15"
-                            ctx.font = "bold 14px sans-serif"
-                            const errorText = "Err: " + controlClient.pidError.toFixed(2)
-                            ctx.fillText(errorText, centerX - 30, rect.y + 20)
+                            // Hata değeri
+                            const error = controlClient.pidError
+                            if (Math.abs(error) > 0.01) {
+                                ctx.font = "bold 11px monospace"
+                                ctx.fillStyle = "rgba(255, 255, 255, 0.7)"
+                                const errorText = error > 0 ? `→ ${error.toFixed(2)}` : `← ${Math.abs(error).toFixed(2)}`
+                                ctx.fillText(errorText, targetX + 10, rect.y + rect.height * 0.6)
+                            }
+
+                            // ═══ DURUM ETİKETİ ═══
+                            ctx.font = "bold 12px sans-serif"
+                            ctx.fillStyle = "#22c55e"
+                            const mode = controlClient.guidanceMode
+                            ctx.fillText(mode, centerX - 15, rect.y + 15)
                         }
                     }
                 }

@@ -206,8 +206,6 @@ void TcpCameraClient::updateDisplay()
         return;
     }
 
-    qDebug() << "[TcpCameraClient] updateDisplay: sending frame" << m_currentFrame.width() << "x" << m_currentFrame.height();
-
     // Thread-safe update: VideoItem paint must be called from GUI thread
     QImage frameCopy = m_currentFrame;
     QMetaObject::invokeMethod(m_videoItem, [this, frameCopy]() {

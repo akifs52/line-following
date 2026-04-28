@@ -7,6 +7,7 @@
 #include <QVideoSink>
 
 #include "cpp/CameraWorker.h"
+#include "cpp/GamepadManager.h"
 #include "cpp/HapticsManager.h"
 #include "cpp/RaspiControlClient.h"
 #include "cpp/TcpCameraClient.h"
@@ -33,6 +34,7 @@ int main(int argc, char *argv[])
         QQmlApplicationEngine engine;
 
         CameraWorker cameraWorker;
+        GamepadManager gamepadManager;
         HapticsManager hapticsManager;
         RaspiControlClient controlClient;
         TcpCameraClient tcpCameraClient;
@@ -49,6 +51,7 @@ int main(int argc, char *argv[])
             &YoloEngine::processFrame);
 
         engine.rootContext()->setContextProperty(QStringLiteral("cameraWorker"), &cameraWorker);
+        engine.rootContext()->setContextProperty(QStringLiteral("gamepad"), &gamepadManager);
         engine.rootContext()->setContextProperty(QStringLiteral("haptics"), &hapticsManager);
         engine.rootContext()->setContextProperty(QStringLiteral("controlClient"), &controlClient);
         engine.rootContext()->setContextProperty(QStringLiteral("tcpCameraClient"), &tcpCameraClient);

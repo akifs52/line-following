@@ -1,6 +1,3 @@
-<img width="542" height="974" alt="image" src="https://github.com/user-attachments/assets/18c79c85-1919-42e9-8aa3-36c97a29ab9a" />
-
-
 # QtYoloAndroid (qmake)
 
 ## Build

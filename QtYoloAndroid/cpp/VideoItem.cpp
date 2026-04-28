@@ -27,7 +27,6 @@ void VideoItem::setFrame(const QImage &img)
     locker.unlock();
     update();
     
-    qDebug() << "[VideoItem] Frame set:" << img.width() << "x" << img.height();
 }
 
 void VideoItem::paint(QPainter *painter)

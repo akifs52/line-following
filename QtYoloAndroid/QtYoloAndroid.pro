@@ -8,6 +8,7 @@ SOURCES += \
     main.cpp \
     cpp/CameraWorker.cpp \
     cpp/FrameWorker.cpp \
+    cpp/GamepadManager.cpp \
     cpp/HapticsManager.cpp \
     cpp/RaspiControlClient.cpp \
     cpp/TcpCameraClient.cpp \
@@ -18,6 +19,7 @@ HEADERS += \
     cpp/CameraWorker.h \
     cpp/FrameRingBuffer.h \
     cpp/FrameWorker.h \
+    cpp/GamepadManager.h \
     cpp/HapticsManager.h \
     cpp/RaspiControlClient.h \
     cpp/TcpCameraClient.h \
@@ -103,6 +105,11 @@ macx {
     QMAKE_LFLAGS += -Wl,-rpath,@executable_path/../Frameworks
 }
 
+# Windows application icon
+win32 {
+    RC_FILE = $$PWD/icons/app.rc
+}
+
 # Windows NCNN with GPU/Vulkan support
 win32 {
     NCNN_WINDOWS_ROOT = $$PWD/3rdparty/ncnn-$$NCNN_VERSION-windows-vs2022/ncnn-$$NCNN_VERSION-windows-vs2022
@@ -121,7 +128,6 @@ win32 {
             -lMachineIndependent \
             -lGenericCodeGen \
             -lglslang-default-resource-limits
-
 
     # Vulkan SDK library path for MinGW
     LIBS += -LD:/VulkanSDK/1.4.341.1/Lib -lvulkan-1
