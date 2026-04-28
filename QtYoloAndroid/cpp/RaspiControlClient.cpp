@@ -12,18 +12,18 @@ constexpr qint64 kAutonomousWatchdogIntervalMs = 80;
 constexpr qint64 kDetectionFeedTimeoutMs = 450;
 constexpr double kDetectionScoreThreshold = 0.40;
 
-// ═══ BASİT PID PARAMETRELERİ (P-only kontrol) ═══
-constexpr double kPidKp = 50.0;   // Orantısal kazanç (yüksek = hızlı tepki)
-// constexpr double kPidKi = 0.0;  // İntegral kapalı (şu an kullanılmıyor)
-// constexpr double kPidKd = 0.0;  // Türev kapalı (şu an kullanılmıyor)
+// ═══ PID PARAMETRELERİ (PI kontrol - merkezleme için) ═══
+constexpr double kPidKp = 80.0;      // 90'dan 80'e (biraz daha yumuşak)
+constexpr double kPidKi = 15.0;      // İNTEGRAL - merkeze oturtmak için
+constexpr double kPidIntegralMax = 25.0;  // İntegral limiti
 
 // ═══ MOTOR HIZLARI ═══
-constexpr double kAutoBaseSpeed = 35.0;
-constexpr double kAutoMaxSpeed = 50.0;
-constexpr double kTurnSlowSpeed = 28.0;  // Dönüşlerde iç teker hızı
+constexpr double kAutoBaseSpeed = 38.0;
+constexpr double kAutoMaxSpeed = 55.0;
+constexpr double kTurnSlowSpeed = 20.0;
 
 // ═══ HAT TAKİP ═══
-constexpr double kDefaultHalfRoadPct = 0.20;
+constexpr double kDefaultHalfRoadPct = 0.30;
 constexpr qint64 kNoLineTimeoutMs = 800;
 constexpr double kSearchTurnSpeed = 35.0;
 } // namespace
@@ -266,30 +266,55 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
     }
 
     // ═══════════════════════════════════════════════════════
-    // ÇİZGİ VARSA: PID HESAPLA VE MOTORLARI SÜR
+    // PI KONTROL (P + I)
     // ═══════════════════════════════════════════════════════
     if (lineSeen) {
         m_lastLineSeenMs = nowMs;
 
-        // BASİT P KONTROL (sadece orantısal)
-        double turnAmount = kPidKp * error;
+        // KULLANICI İSTEĞİ: Her 500ms'de bir sistemi taze (ilk açılış) haline döndür
+        static qint64 lastSoftResetMs = 0;
+        if (nowMs - lastSoftResetMs > 10) {
+            lastSoftResetMs = nowMs;
+            m_pidIntegral = 0.0;
+            m_estimatedHalfRoadWidth = -1.0;
+        }
 
-        // Motor hızlarını hesapla
-        // turnAmount > 0 → sağa dön (sol teker hızlı, sağ teker yavaş)
-        // turnAmount < 0 → sola dön (sağ teker hızlı, sol teker yavaş)
-
+        // dt hesapla (saniye cinsinden)
+        double dt = (nowMs - m_pidLastMs) / 1000.0;
+        if (dt < 0.01) dt = 0.01;   // min 10ms
+        if (dt > 0.20) dt = 0.20;   // max 200ms
+        m_pidLastMs = nowMs;
+        
+        // P terimi
+        double pTerm = kPidKp * error;
+        
+        // I terimi (integral)
+        m_pidIntegral += error * dt;
+        m_pidIntegral = qBound(-kPidIntegralMax, m_pidIntegral, kPidIntegralMax);
+        
+        // Mod değişince integrali sıfırla
+        if (mode != m_lastMode) {
+            m_pidIntegral = 0.0;
+            m_pidPrevError = error;
+        }
+        m_lastMode = mode;
+        
+        double iTerm = kPidKi * m_pidIntegral;
+        
+        // Toplam dönüş
+        double turnAmount = pTerm + iTerm;
+        
+        // Motor hızları
         double speedLeft = kAutoBaseSpeed + turnAmount;
         double speedRight = kAutoBaseSpeed - turnAmount;
-
-        // Hızları sınırla
+        
         speedLeft = qBound(kTurnSlowSpeed, speedLeft, kAutoMaxSpeed);
         speedRight = qBound(kTurnSlowSpeed, speedRight, kAutoMaxSpeed);
+        
+        m_pidPrevError = error;
 
-        // ═══════════════════════════════════════════════════════
-        // TEST DEBUG - SADECE ÖNEMLİ OLANLAR
-        // ═══════════════════════════════════════════════════════
+        // Debug'a ekle
         if (m_debugEnabled && !lineCenters.isEmpty()) {
-            // Her saniyede bir özet debug (spam olmasın diye)
             static qint64 lastSummaryMs = 0;
             if (nowMs - lastSummaryMs > 1000) {
                 lastSummaryMs = nowMs;
@@ -305,6 +330,12 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
                 qDebug().noquote() << QStringLiteral(
                     "   Hata (error) : %1").arg(error, 0, 'f', 3);
                 qDebug().noquote() << QStringLiteral(
+                    "   P            : %1").arg(pTerm, 0, 'f', 1);
+                qDebug().noquote() << QStringLiteral(
+                    "   I            : %1").arg(iTerm, 0, 'f', 1);
+                qDebug().noquote() << QStringLiteral(
+                    "   Integral     : %1").arg(m_pidIntegral, 0, 'f', 2);
+                qDebug().noquote() << QStringLiteral(
                     "   Donus Miktar : %1").arg(turnAmount, 0, 'f', 1);
                 qDebug().noquote() << QStringLiteral(
                     "   Sol Teker    : %1").arg(speedLeft, 0, 'f', 1);
@@ -313,12 +344,17 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
                 qDebug().noquote() << QStringLiteral(
                     "   Yol Genisligi: %1").arg(m_estimatedHalfRoadWidth * 2, 0, 'f', 3);
                 
-                // Görsel durum çubuğu
-                double centerPos = 0.5 + (error * 0.5);  // 0=sol, 1=sağ
+                double centerPos = 0.5 + (error * 0.5);
                 int barPos = qBound(0, int(centerPos * 40), 39);
                 QString bar(40, QLatin1Char('-'));
-                bar[barPos] = QLatin1Char('#');
-                bar[19] = QLatin1Char('|');  // orta çizgi (hedef)
+                bar[19] = QLatin1Char('|');
+                if (qAbs(error) < 0.02) {
+                    bar[19] = QLatin1Char('O');  // Tam ortada
+                } else if (barPos < 19) {
+                    bar[barPos] = QLatin1Char('#');
+                } else if (barPos > 19) {
+                    bar[barPos] = QLatin1Char('#');
+                }
                 qDebug().noquote() << QStringLiteral(
                     "   [----------------------------------------]");
                 qDebug().noquote() << QStringLiteral(
@@ -331,32 +367,27 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
                     "===========================================");
             }
             
-            // Anlık çizgi pozisyonları (her frame)
             QString lineInfo;
             for (int i = 0; i < lineCenters.size(); ++i) {
                 lineInfo += QStringLiteral(" C%1=%2").arg(i+1).arg(lineCenters[i], 0, 'f', 2);
             }
             qDebug().noquote() << QStringLiteral(
-                "> %1 | Hata:%2 | %3").arg(mode, lineInfo).arg(error, 0, 'f', 3);
+                "> %1 | Hata:%2 | P:%3 I:%4 | %5")
+                .arg(mode)
+                .arg(error, 0, 'f', 3)
+                .arg(pTerm, 0, 'f', 1)
+                .arg(iTerm, 0, 'f', 1)
+                .arg(lineInfo);
         }
 
-        // Görselleştirme verilerini güncelle
         m_currentPidError = error;
         m_currentPidOutput = turnAmount;
         m_currentBaseSpeed = kAutoBaseSpeed;
         m_currentLeftSpeed = speedLeft;
         m_currentRightSpeed = speedRight;
         m_currentLineCenterX = 0.5 + (error * 0.5);
-
-        // ═══════════════════════════════════════════════════
-        // GÖRSELLEŞTİRME İÇİN (QML'de kullanılacak)
-        // ═══════════════════════════════════════════════════
-        // targetCenter: 0=sol kenar, 0.5=orta, 1=sağ kenar
         m_currentTargetCenter = 0.5 + (error * 0.5);
-
-        // dynamicCenter: şimdilik sabit = 0.5 (orta nokta)
-        // Daha sonra I-controller eklenince burası kayacak
-        m_currentDynamicCenter = 0.5;
+        m_currentDynamicCenter = 0.5 + (m_pidIntegral * 0.05);
 
         emit pidDataChanged();
 
@@ -522,6 +553,9 @@ void RaspiControlClient::resetAutonomousController()
     m_lastSeenLineSide = LineSide::Unknown;
     m_searchDir = QStringLiteral("left");
     m_lastMode.clear();
+    m_pidIntegral = 0.0;      // EKLENDİ
+    m_pidLastMs = nowMs;      // EKLENDİ
+    m_pidPrevError = 0.0;     // EKLENDİ
 }
 
 void RaspiControlClient::clearAutonomousState(bool sendStopCommand)
