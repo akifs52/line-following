@@ -488,92 +488,196 @@ ApplicationWindow {
                             ctx.fillText(label, x + 6, labelY + 14)
                         }
                         
-                        // Autonomous visualization (only when autonomous mode is active)
+                        // ═══════════════════════════════════════════════════════════════════════
+                        // DEBUG HUD - GEOMETRY OVERLAY
+                        // ═══════════════════════════════════════════════════════════════════════
                         if (controlClient.autonomousMode && boxes.length > 0) {
-                            // ═══════════════════════════════════════════════════
-                            // GÖRSELLEŞTİRME - BASİT VE NET
-                            // ═══════════════════════════════════════════════════
-
-                            // Orta çizgi (referans)
                             const centerX = rect.x + rect.width * 0.5
-
-                            // Target: Aracın gitmesi gereken nokta (yeşil ok)
                             const targetX = rect.x + controlClient.lineCenterX * rect.width
+                            const lineY = rect.y + rect.height * 0.72
 
-                            // ═══ ORTA REFERANS ÇİZGİSİ (beyaz kesikli) ═══
+                            // ═══ 2 ÇİZGİ VARSA: ROAD WIDTH GÖRSELLEŞTİRMESİ ═══
+                            if (boxes.length >= 2) {
+                                const sorted = boxes.slice().sort((a, b) => (a.x + a.w * 0.5) - (b.x + b.w * 0.5))
+                                const left = sorted[0]
+                                const right = sorted[sorted.length - 1]
+
+                                const leftCx = rect.x + (left.x + left.w * 0.5) * rect.width
+                                const rightCx = rect.x + (right.x + right.w * 0.5) * rect.width
+                                const roadWidth = (right.x + right.w * 0.5) - (left.x + left.w * 0.5)
+                                const halfRoad = roadWidth * 0.5
+
+                                // Yol genişliği çizgisi
+                                ctx.beginPath()
+                                ctx.moveTo(leftCx, lineY)
+                                ctx.lineTo(rightCx, lineY)
+                                ctx.strokeStyle = "#22c55e"
+                                ctx.lineWidth = 2
+                                ctx.stroke()
+
+                                // Sol tick
+                                ctx.beginPath()
+                                ctx.moveTo(leftCx, lineY - 10)
+                                ctx.lineTo(leftCx, lineY + 10)
+                                ctx.stroke()
+
+                                // Sağ tick
+                                ctx.beginPath()
+                                ctx.moveTo(rightCx, lineY - 10)
+                                ctx.lineTo(rightCx, lineY + 10)
+                                ctx.stroke()
+
+                                // Yol genişliği etiketi
+                                ctx.font = "bold 11px monospace"
+                                ctx.fillStyle = "#22c55e"
+                                ctx.fillText(`roadWidth = ${roadWidth.toFixed(3)}`, (leftCx + rightCx) * 0.5 - 55, lineY - 15)
+                                ctx.fillText(`halfRoad = ${halfRoad.toFixed(3)}`, (leftCx + rightCx) * 0.5 - 50, lineY - 30)
+
+                                // Çizgi merkezi etiketleri
+                                ctx.font = "bold 11px sans-serif"
+                                ctx.fillStyle = "#22c55e"
+                                ctx.fillText(`LEFT`, leftCx - 15, lineY + 25)
+                                ctx.fillText(`RIGHT`, rightCx - 20, lineY + 25)
+                            }
+
+                            // ═══ TEK ÇİZGİ VARSA: OFFSET GÖRSELLEŞTİRMESİ ═══
+                            if (boxes.length === 1) {
+                                const box = boxes[0]
+                                const cx = rect.x + (box.x + box.w * 0.5) * rect.width
+                                const isLeft = (box.x + box.w * 0.5) < 0.5
+                                const halfRoad = 0.25  // kDefaultHalfRoadPct yaklaşık değeri
+                                
+                                const lineY1 = rect.y + rect.height * 0.65
+                                
+                                // Tespit edilen çizgi (dikey çizgi)
+                                ctx.beginPath()
+                                ctx.moveTo(cx, lineY1 - 25)
+                                ctx.lineTo(cx, lineY1 + 25)
+                                ctx.strokeStyle = isLeft ? "#3b82f6" : "#f59e0b"  // Sol=mavi, Sağ= turuncu
+                                ctx.lineWidth = 3
+                                ctx.stroke()
+                                
+                                // Çizgi etiketi
+                                ctx.font = "bold 12px sans-serif"
+                                ctx.fillStyle = isLeft ? "#3b82f6" : "#f59e0b"
+                                ctx.fillText(isLeft ? "LINE (L)" : "LINE (R)", cx - 25, lineY1 - 30)
+                                
+                                // Offset oku (halfRoad)
+                                const targetOffset = isLeft ? halfRoad : -halfRoad
+                                const targetX1 = cx + targetOffset * rect.width
+                                
+                                // Offset çizgisi (kesikli)
+                                ctx.beginPath()
+                                ctx.setLineDash([5, 5])
+                                ctx.moveTo(cx, lineY1)
+                                ctx.lineTo(targetX1, lineY1)
+                                ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"
+                                ctx.lineWidth = 1
+                                ctx.stroke()
+                                ctx.setLineDash([])
+                                
+                                // Offset oku
+                                const arrowDir = isLeft ? 1 : -1
+                                ctx.beginPath()
+                                ctx.moveTo(cx + arrowDir * 15, lineY1 - 5)
+                                ctx.lineTo(targetX1, lineY1)
+                                ctx.lineTo(cx + arrowDir * 15, lineY1 + 5)
+                                ctx.fillStyle = "rgba(255, 255, 255, 0.6)"
+                                ctx.fill()
+                                
+                                // HalfRoad etiketi
+                                ctx.font = "bold 10px monospace"
+                                ctx.fillStyle = "rgba(255, 255, 255, 0.7)"
+                                ctx.fillText(`+halfRoad`, (cx + targetX1) / 2 - 20, lineY1 - 8)
+                                
+                                // Hedef nokta (target)
+                                ctx.beginPath()
+                                ctx.arc(targetX1, lineY1, 5, 0, 2 * Math.PI)
+                                ctx.fillStyle = "#22c55e"
+                                ctx.fill()
+                                ctx.strokeStyle = "white"
+                                ctx.lineWidth = 1.5
+                                ctx.stroke()
+                            }
+
+                            // ═══ ORTA REFERANS ÇİZGİSİ ═══
                             ctx.beginPath()
                             ctx.setLineDash([8, 6])
                             ctx.moveTo(centerX, rect.y)
                             ctx.lineTo(centerX, rect.y + rect.height)
-                            ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"
+                            ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"
                             ctx.lineWidth = 1
                             ctx.stroke()
                             ctx.setLineDash([])
 
-                            // ═══ TARGET İŞARETİ (yeşil - gitmek istediğimiz yer) ═══
-                            // Dikey çizgi
+                            // ═══ TARGET OKU ═══
                             ctx.beginPath()
-                            ctx.moveTo(targetX, rect.y + rect.height * 0.5)
-                            ctx.lineTo(targetX, rect.y + rect.height * 0.85)
+                            ctx.moveTo(targetX, rect.y + rect.height * 0.55)
+                            ctx.lineTo(targetX, rect.y + rect.height * 0.82)
                             ctx.strokeStyle = "#22c55e"
                             ctx.lineWidth = 3
                             ctx.stroke()
-                            
-                            // Ok ucu (üçgen)
+
+                            // Ok ucu
                             const arrowSize = 12
                             ctx.beginPath()
-                            ctx.moveTo(targetX, rect.y + rect.height * 0.5 - arrowSize)
-                            ctx.lineTo(targetX - arrowSize, rect.y + rect.height * 0.5 + 5)
-                            ctx.lineTo(targetX + arrowSize, rect.y + rect.height * 0.5 + 5)
+                            ctx.moveTo(targetX, rect.y + rect.height * 0.55 - arrowSize)
+                            ctx.lineTo(targetX - arrowSize, rect.y + rect.height * 0.55 + 5)
+                            ctx.lineTo(targetX + arrowSize, rect.y + rect.height * 0.55 + 5)
                             ctx.closePath()
                             ctx.fillStyle = "#22c55e"
                             ctx.fill()
-                            
-                            // Target noktası (daire)
+
+                            // Target noktası
                             ctx.beginPath()
                             ctx.arc(targetX, rect.y + rect.height * 0.82, 6, 0, 2 * Math.PI)
                             ctx.fillStyle = "#22c55e"
                             ctx.fill()
                             ctx.strokeStyle = "white"
-                            ctx.lineWidth = 1.5
+                            ctx.lineWidth = 2
                             ctx.stroke()
-                            
-                            // Mesafe göstergesi (orta çizgi ile target arası)
-                            if (Math.abs(targetX - centerX) > 3) {
-                                ctx.beginPath()
-                                ctx.setLineDash([3, 4])
-                                ctx.moveTo(centerX, rect.y + rect.height * 0.7)
-                                ctx.lineTo(targetX, rect.y + rect.height * 0.7)
-                                ctx.strokeStyle = "rgba(255, 255, 255, 0.4)"
-                                ctx.lineWidth = 1
-                                ctx.stroke()
-                                ctx.setLineDash([])
-                                
-                                // Ok yönü
-                                const midX = (centerX + targetX) / 2
-                                const dir = targetX > centerX ? 1 : -1
-                                ctx.beginPath()
-                                ctx.moveTo(midX, rect.y + rect.height * 0.7 - 5)
-                                ctx.lineTo(midX + dir * 8, rect.y + rect.height * 0.7)
-                                ctx.lineTo(midX, rect.y + rect.height * 0.7 + 5)
-                                ctx.fillStyle = "rgba(255, 255, 255, 0.6)"
-                                ctx.fill()
-                            }
-                            
-                            // Hata değeri
-                            const error = controlClient.pidError
-                            if (Math.abs(error) > 0.01) {
-                                ctx.font = "bold 11px monospace"
-                                ctx.fillStyle = "rgba(255, 255, 255, 0.7)"
-                                const errorText = error > 0 ? `→ ${error.toFixed(2)}` : `← ${Math.abs(error).toFixed(2)}`
-                                ctx.fillText(errorText, targetX + 10, rect.y + rect.height * 0.6)
-                            }
 
-                            // ═══ DURUM ETİKETİ ═══
-                            ctx.font = "bold 12px sans-serif"
+                            // ═══ CENTER NOKTA ═══
+                            ctx.beginPath()
+                            ctx.arc(centerX, rect.y + rect.height * 0.82, 5, 0, 2 * Math.PI)
+                            ctx.fillStyle = "white"
+                            ctx.fill()
+
+                            // ═══ PID DEBUG PANELİ (sol alt) - MINI ═══
+                            const panelX = rect.x + 5
+                            const panelY = rect.y + rect.height - 52
+                            ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+                            ctx.fillRect(panelX, panelY, 95, 45)
+                            ctx.strokeStyle = "#22c55e"
+                            ctx.lineWidth = 1
+                            ctx.strokeRect(panelX, panelY, 95, 45)
+
+                            ctx.font = "bold 8px monospace"
                             ctx.fillStyle = "#22c55e"
+                            ctx.fillText("E" + controlClient.pidError.toFixed(2), panelX + 4, panelY + 11)
+                            ctx.fillText("T" + controlClient.pidOutput.toFixed(1), panelX + 50, panelY + 11)
+                            ctx.fillText("L" + controlClient.leftMotorSpeed.toFixed(0), panelX + 4, panelY + 24)
+                            ctx.fillText("R" + controlClient.rightMotorSpeed.toFixed(0), panelX + 50, panelY + 24)
+                            ctx.fillText("B" + controlClient.baseSpeed.toFixed(0), panelX + 4, panelY + 37)
+
+                            // ═══ DURUM PANELİ (sağ alt) - MINI ═══
+                            const modePanelX = rect.x + rect.width - 55
+                            const modePanelY = rect.y + rect.height - 28
+                            ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+                            ctx.fillRect(modePanelX, modePanelY, 52, 22)
+                            ctx.strokeStyle = "#22c55e"
+                            ctx.strokeRect(modePanelX, modePanelY, 52, 22)
+
                             const mode = controlClient.guidanceMode
-                            ctx.fillText(mode, centerX - 15, rect.y + 15)
+                            ctx.font = "bold 9px sans-serif"
+                            ctx.fillStyle = "#22c55e"
+                            const shortMode = mode.replace("-LINE", "").replace("SEARCH", "S")
+                            ctx.fillText(shortMode, modePanelX + 4, modePanelY + 14)
+
+                            // ═══ MOD ETİKETİ (üst orta) - MINI ═══
+                            ctx.font = "bold 10px sans-serif"
+                            ctx.fillStyle = "#22c55e"
+                            ctx.fillText(shortMode, centerX - 10, rect.y + 12)
                         }
                     }
                 }

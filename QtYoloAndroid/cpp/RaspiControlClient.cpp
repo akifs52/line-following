@@ -9,11 +9,11 @@ namespace {
 // Temel zamanlama sabitleri
 constexpr qint64 kMinCommandIntervalMs = 40;
 constexpr qint64 kAutonomousWatchdogIntervalMs = 80;
-constexpr qint64 kDetectionFeedTimeoutMs = 450;
+constexpr qint64 kDetectionFeedTimeoutMs = 350;
 constexpr double kDetectionScoreThreshold = 0.40;
 
 // ═══ PID PARAMETRELERİ (PI kontrol - merkezleme için) ═══
-constexpr double kPidKp = 80.0;      // 90'dan 80'e (biraz daha yumuşak)
+constexpr double kPidKp = 60.0;      // 90'dan 80'e (biraz daha yumuşak)
 constexpr double kPidKi = 15.0;      // İNTEGRAL - merkeze oturtmak için
 constexpr double kPidIntegralMax = 25.0;  // İntegral limiti
 
@@ -23,7 +23,7 @@ constexpr double kAutoMaxSpeed = 55.0;
 constexpr double kTurnSlowSpeed = 20.0;
 
 // ═══ HAT TAKİP ═══
-constexpr double kDefaultHalfRoadPct = 0.30;
+constexpr double kDefaultHalfRoadPct = 0.25;
 constexpr qint64 kNoLineTimeoutMs = 800;
 constexpr double kSearchTurnSpeed = 35.0;
 } // namespace
@@ -204,62 +204,62 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
         const double leftCx = lineCenters.constFirst();
         const double rightCx = lineCenters.constLast();
         const double roadWidth = rightCx - leftCx;
-        
+
         // IKI CIZGI: ortalarini hedefle
         const double middle = (leftCx + rightCx) * 0.5;
         error = (middle - 0.5) * 2.0;
         mode = QStringLiteral("2-LINE");
         lineSeen = true;
         m_lastSeenLineSide = LineSide::Both;
-        
+
         // Yol genisligini ogren
         m_estimatedHalfRoadWidth = roadWidth * 0.5;
-        
+
         if (m_debugEnabled) {
             qDebug().noquote() << QStringLiteral(
-                "[OK] 2-LINE: sol=%1 sag=%2 genislik=%3 orta=%4 hata=%5")
-                .arg(leftCx, 0, 'f', 3)
-                .arg(rightCx, 0, 'f', 3)
-                .arg(roadWidth, 0, 'f', 3)
-                .arg(middle, 0, 'f', 3)
-                .arg(error, 0, 'f', 3);
+                                      "[OK] 2-LINE: sol=%1 sag=%2 genislik=%3 orta=%4 hata=%5")
+                                      .arg(leftCx, 0, 'f', 3)
+                                      .arg(rightCx, 0, 'f', 3)
+                                      .arg(roadWidth, 0, 'f', 3)
+                                      .arg(middle, 0, 'f', 3)
+                                      .arg(error, 0, 'f', 3);
         }
     }
-    
+
     // Tek cizgi modu (veya duplicate'ten dusen)
     if (!lineSeen && lineCenters.size() >= 1) {
         const double cx = lineCenters.constFirst();
-        const double halfRoad = (m_estimatedHalfRoadWidth > 0.0) 
-                                ? m_estimatedHalfRoadWidth 
-                                : kDefaultHalfRoadPct;
-        
+        const double halfRoad = (m_estimatedHalfRoadWidth > 0.0)
+                                    ? m_estimatedHalfRoadWidth
+                                    : kDefaultHalfRoadPct;
+
         if (cx < 0.5) {
             const double target = cx + halfRoad;
             error = (target - 0.5) * 2.0;
             mode = QStringLiteral("1-LINE-L");
             m_lastSeenLineSide = LineSide::Left;
-            
+
             if (m_debugEnabled) {
                 qDebug().noquote() << QStringLiteral(
-                    "<-- 1-LINE-L: cx=%1 target=%2 halfRoad=%3 hata=%4")
-                    .arg(cx, 0, 'f', 3)
-                    .arg(target, 0, 'f', 3)
-                    .arg(halfRoad, 0, 'f', 3)
-                    .arg(error, 0, 'f', 3);
+                                          "<-- 1-LINE-L: cx=%1 target=%2 halfRoad=%3 hata=%4")
+                                          .arg(cx, 0, 'f', 3)
+                                          .arg(target, 0, 'f', 3)
+                                          .arg(halfRoad, 0, 'f', 3)
+                                          .arg(error, 0, 'f', 3);
             }
         } else {
             const double target = cx - halfRoad;
             error = (target - 0.5) * 2.0;
             mode = QStringLiteral("1-LINE-R");
             m_lastSeenLineSide = LineSide::Right;
-            
+
             if (m_debugEnabled) {
                 qDebug().noquote() << QStringLiteral(
-                    "--> 1-LINE-R: cx=%1 target=%2 halfRoad=%3 hata=%4")
-                    .arg(cx, 0, 'f', 3)
-                    .arg(target, 0, 'f', 3)
-                    .arg(halfRoad, 0, 'f', 3)
-                    .arg(error, 0, 'f', 3);
+                                          "--> 1-LINE-R: cx=%1 target=%2 halfRoad=%3 hata=%4")
+                                          .arg(cx, 0, 'f', 3)
+                                          .arg(target, 0, 'f', 3)
+                                          .arg(halfRoad, 0, 'f', 3)
+                                          .arg(error, 0, 'f', 3);
             }
         }
         lineSeen = true;
@@ -284,33 +284,33 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
         if (dt < 0.01) dt = 0.01;   // min 10ms
         if (dt > 0.20) dt = 0.20;   // max 200ms
         m_pidLastMs = nowMs;
-        
+
         // P terimi
         double pTerm = kPidKp * error;
-        
+
         // I terimi (integral)
         m_pidIntegral += error * dt;
         m_pidIntegral = qBound(-kPidIntegralMax, m_pidIntegral, kPidIntegralMax);
-        
+
         // Mod değişince integrali sıfırla
         if (mode != m_lastMode) {
             m_pidIntegral = 0.0;
             m_pidPrevError = error;
         }
         m_lastMode = mode;
-        
+
         double iTerm = kPidKi * m_pidIntegral;
-        
+
         // Toplam dönüş
         double turnAmount = pTerm + iTerm;
-        
+
         // Motor hızları
         double speedLeft = kAutoBaseSpeed + turnAmount;
         double speedRight = kAutoBaseSpeed - turnAmount;
-        
+
         speedLeft = qBound(kTurnSlowSpeed, speedLeft, kAutoMaxSpeed);
         speedRight = qBound(kTurnSlowSpeed, speedRight, kAutoMaxSpeed);
-        
+
         m_pidPrevError = error;
 
         // Debug'a ekle
@@ -318,32 +318,32 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
             static qint64 lastSummaryMs = 0;
             if (nowMs - lastSummaryMs > 1000) {
                 lastSummaryMs = nowMs;
-                
+
                 qDebug().noquote() << QStringLiteral(
                     "===========================================");
                 qDebug().noquote() << QStringLiteral(
                     "[DURUM OZETI] (her 1 sn)");
                 qDebug().noquote() << QStringLiteral(
-                    "   Cizgi Sayisi : %1").arg(lineCenters.size());
+                                          "   Cizgi Sayisi : %1").arg(lineCenters.size());
                 qDebug().noquote() << QStringLiteral(
-                    "   Mod          : %1").arg(mode);
+                                          "   Mod          : %1").arg(mode);
                 qDebug().noquote() << QStringLiteral(
-                    "   Hata (error) : %1").arg(error, 0, 'f', 3);
+                                          "   Hata (error) : %1").arg(error, 0, 'f', 3);
                 qDebug().noquote() << QStringLiteral(
-                    "   P            : %1").arg(pTerm, 0, 'f', 1);
+                                          "   P            : %1").arg(pTerm, 0, 'f', 1);
                 qDebug().noquote() << QStringLiteral(
-                    "   I            : %1").arg(iTerm, 0, 'f', 1);
+                                          "   I            : %1").arg(iTerm, 0, 'f', 1);
                 qDebug().noquote() << QStringLiteral(
-                    "   Integral     : %1").arg(m_pidIntegral, 0, 'f', 2);
+                                          "   Integral     : %1").arg(m_pidIntegral, 0, 'f', 2);
                 qDebug().noquote() << QStringLiteral(
-                    "   Donus Miktar : %1").arg(turnAmount, 0, 'f', 1);
+                                          "   Donus Miktar : %1").arg(turnAmount, 0, 'f', 1);
                 qDebug().noquote() << QStringLiteral(
-                    "   Sol Teker    : %1").arg(speedLeft, 0, 'f', 1);
+                                          "   Sol Teker    : %1").arg(speedLeft, 0, 'f', 1);
                 qDebug().noquote() << QStringLiteral(
-                    "   Sag Teker    : %1").arg(speedRight, 0, 'f', 1);
+                                          "   Sag Teker    : %1").arg(speedRight, 0, 'f', 1);
                 qDebug().noquote() << QStringLiteral(
-                    "   Yol Genisligi: %1").arg(m_estimatedHalfRoadWidth * 2, 0, 'f', 3);
-                
+                                          "   Yol Genisligi: %1").arg(m_estimatedHalfRoadWidth * 2, 0, 'f', 3);
+
                 double centerPos = 0.5 + (error * 0.5);
                 int barPos = qBound(0, int(centerPos * 40), 39);
                 QString bar(40, QLatin1Char('-'));
@@ -358,7 +358,7 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
                 qDebug().noquote() << QStringLiteral(
                     "   [----------------------------------------]");
                 qDebug().noquote() << QStringLiteral(
-                    "   [%1]").arg(bar);
+                                          "   [%1]").arg(bar);
                 qDebug().noquote() << QStringLiteral(
                     "   [----------------------------------------]");
                 qDebug().noquote() << QStringLiteral(
@@ -366,18 +366,18 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
                 qDebug().noquote() << QStringLiteral(
                     "===========================================");
             }
-            
+
             QString lineInfo;
             for (int i = 0; i < lineCenters.size(); ++i) {
                 lineInfo += QStringLiteral(" C%1=%2").arg(i+1).arg(lineCenters[i], 0, 'f', 2);
             }
             qDebug().noquote() << QStringLiteral(
-                "> %1 | Hata:%2 | P:%3 I:%4 | %5")
-                .arg(mode)
-                .arg(error, 0, 'f', 3)
-                .arg(pTerm, 0, 'f', 1)
-                .arg(iTerm, 0, 'f', 1)
-                .arg(lineInfo);
+                                      "> %1 | Hata:%2 | P:%3 I:%4 | %5")
+                                      .arg(mode)
+                                      .arg(error, 0, 'f', 3)
+                                      .arg(pTerm, 0, 'f', 1)
+                                      .arg(iTerm, 0, 'f', 1)
+                                      .arg(lineInfo);
         }
 
         m_currentPidError = error;
@@ -410,10 +410,10 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
     if (m_debugEnabled && lineCenters.isEmpty()) {
         if (elapsedMs > 100) {  // 100ms'den fazla çizgi yoksa uyar
             qDebug().noquote() << QStringLiteral(
-                "! CIZGI YOK ! (%1 ms) - %2")
-                .arg(elapsedMs)
-                .arg(elapsedMs < kNoLineTimeoutMs ? "DÜZ GİDİYOR" : 
-                     elapsedMs < kNoLineTimeoutMs * 3 ? "ARIYOR" : "DURDU");
+                                      "! CIZGI YOK ! (%1 ms) - %2")
+                                      .arg(elapsedMs)
+                                      .arg(elapsedMs < kNoLineTimeoutMs ? "DÜZ GİDİYOR" :
+                                               elapsedMs < kNoLineTimeoutMs * 3 ? "ARIYOR" : "DURDU");
         }
     }
 
@@ -594,15 +594,15 @@ QVector<double> RaspiControlClient::extractLineCenters(const QVariantList &boxes
     }
 
     std::sort(centers.begin(), centers.end());
-    
+
     // YAKIN TESPİTLERİ BİRLEŞTİR (aynı çizginin duplicate)
     if (centers.size() > 1) {
         QVector<double> merged;
         merged.reserve(centers.size());
-        
+
         double currentGroup = centers.constFirst();
         int groupCount = 1;
-        
+
         for (int i = 1; i < centers.size(); ++i) {
             if (centers[i] - currentGroup < 0.30) {  // %10'dan yakınsa aynı çizgi
                 // Aynı gruba ekle (ortalama al)
@@ -617,16 +617,16 @@ QVector<double> RaspiControlClient::extractLineCenters(const QVariantList &boxes
         }
         // Son grubu ekle
         merged.push_back(currentGroup);
-        
+
         if (m_debugEnabled && merged.size() != centers.size()) {
             qDebug().noquote() << QStringLiteral(
-                "[BIRLESTIRME] %1 tespit -> %2 cizgi")
-                .arg(centers.size()).arg(merged.size());
+                                      "[BIRLESTIRME] %1 tespit -> %2 cizgi")
+                                      .arg(centers.size()).arg(merged.size());
         }
-        
+
         return merged;
     }
-    
+
     return centers;
 }
 
