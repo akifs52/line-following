@@ -155,6 +155,34 @@ def apply_speed():
     pwmB.ChangeDutyCycle(duty_b)
 
 
+def set_motor_arc(left_pwm, right_pwm):
+    """
+    ARC motor kontrolü - farklı PWM değerleri ile dönüş (Tank dönüş yok)
+    Her iki motor da her zaman ileri yönde çalışır.
+    left_pwm: Sol motor PWM (0-100)
+    right_pwm: Sağ motor PWM (0-100)
+    """
+    global speed
+
+    # PWM'leri sınırla (0-100)
+    left_pwm = max(0, min(100, left_pwm))
+    right_pwm = max(0, min(100, right_pwm))
+
+    # Motor yönleri (her zaman ileri)
+    _motor_a(True)   # Sol motor ileri
+    _motor_b(True)   # Sağ motor ileri
+
+    # PWM uygula (motor scale'leri ile)
+    duty_a = max(0, min(100, left_pwm * MOTOR_A_SCALE))
+    duty_b = max(0, min(100, right_pwm * MOTOR_B_SCALE))
+
+    pwmA.ChangeDutyCycle(duty_a)
+    pwmB.ChangeDutyCycle(duty_b)
+
+    speed = (left_pwm + right_pwm) / 2  # Ortalama hız
+    print(f"[MOTOR ARC] L:{int(left_pwm)} R:{int(right_pwm)}")
+
+
 def set_differential_speed(speed_left, speed_right):
     """
     PC'deki PID kontrolcüsünden gelen diferansiyel hız komutu.
@@ -203,15 +231,16 @@ def handle_command(data):
             print(f"[HATA] Geçersiz PWM: {data}")
         return
 
-    # --- Diferansiyel Hız (PC'deki PID'den gelir) ---
-    #     Format: DIFF,<sol_hız>,<sağ_hız>
-    #     Örnek:  DIFF,45.2,30.8   veya   DIFF,-20,35
+    # --- ARC Motor Kontrolü (Otonom PID'den gelir) ---
+    #     Format: DIFF,<sol_pwm>,<sağ_pwm>
+    #     Örnek:  DIFF,80,40  veya  DIFF,60,60
+    #     Not: Her iki motor da ileri, hız farkı ile dönüş
     if data.startswith("DIFF,"):
         try:
             parts = data.split(",")
-            spd_left = float(parts[1])
-            spd_right = float(parts[2])
-            set_differential_speed(spd_left, spd_right)
+            left_pwm = float(parts[1])
+            right_pwm = float(parts[2])
+            set_motor_arc(left_pwm, right_pwm)
         except (ValueError, IndexError):
             print(f"[HATA] Geçersiz DIFF komutu: {data}")
         return

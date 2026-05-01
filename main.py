@@ -3,17 +3,55 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton,
                               QMessageBox, QDialog, QVBoxLayout, QHBoxLayout)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import QFile, QTimer, Qt, QUrl, QThread, Signal, QSize, QEvent, QMutex
-from PySide6.QtGui import QImage, QPixmap, QColor, QMovie, QKeySequence
+from PySide6.QtGui import QImage, QPixmap, QColor, QMovie, QKeySequence, QIcon
 from PySide6.QtQuickWidgets import QQuickWidget
 import sys
+import os
+import ctypes
 import torch
+
+# PyInstaller veya kaynak kod için resource yolunu al
+def get_resource_path(relative_path):
+    """PyInstaller _MEIPASS veya kaynak dizin için yol döndür"""
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller paketlenmiş uygulama
+        return os.path.join(sys._MEIPASS, relative_path)
+    # Kaynak kod
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
 import cv2
 import numpy as np
 import time
 import subprocess
+import collections
 from ultralytics import YOLO
 from CamDetection import CameraThread, ObjectDetector, process_frame, draw_bounding_boxes
 from frame_saver import FrameSaver
+
+# ═══════════════════════════════════════════════════════════════
+# DEBUG LOGGING SYSTEM
+# ═══════════════════════════════════════════════════════════════
+DEBUG_ENABLED = True          # Master switch for console debug
+DEBUG_LOG_TO_FILE = True      # Write CSV log for graph analysis
+DEBUG_LOG_PATH = "debug_log.txt"
+DEBUG_VERBOSE = True          # Extra detailed prints (1-line, PID, motor)
+
+def debug_print(tag, msg):
+    """Conditional debug print with tag"""
+    if DEBUG_ENABLED:
+        print(f"[{tag}] {msg}")
+
+def debug_log_csv(error, pid_out, speed_l, speed_r, mode, num_lines, slope=None):
+    """Append one row to CSV log file for later graphing"""
+    if not DEBUG_LOG_TO_FILE:
+        return
+    try:
+        with open(DEBUG_LOG_PATH, "a") as f:
+            ts = time.time()
+            slope_str = f"{slope:.3f}" if slope is not None else "None"
+            f.write(f"{ts:.3f},{error:.4f},{pid_out:.2f},{speed_l:.1f},{speed_r:.1f},{mode},{num_lines},{slope_str}\n")
+    except Exception:
+        pass
 
 # ═══════════════════════════════════════════════════════════════
 # YOLO DETECTION THREAD - Ayrı thread'te çalıştır
@@ -74,8 +112,14 @@ class MainWindow (QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # Uygulama ikonunu ayarla
+        icon_path = get_resource_path("icons/luxury-car.ico")
+        app_icon = QIcon(icon_path)
+        self.setWindowIcon(app_icon)
+
         loader = QUiLoader()
-        ui_file = QFile("modern_mainwindow.ui")
+        ui_path = get_resource_path("modern_mainwindow.ui")
+        ui_file = QFile(ui_path)
         ui_file.open(QFile.ReadOnly)
         self.ui = loader.load(ui_file)
         ui_file.close()
@@ -94,6 +138,12 @@ class MainWindow (QMainWindow):
         self.raspiPortLine : QLineEdit = self.ui.findChild(QLineEdit, "raspiPortLine")
         self.quickWidgetSlider1 = self.ui.findChild(QQuickWidget, "quickWidgetSlider1")
         self.quickWidgetJoystick = self.ui.findChild(QQuickWidget, "quickWidgetJoystick")
+        
+        # Debug: Widget'ların bulunup bulunmadığını kontrol et
+        if self.quickWidgetSlider1 is None:
+            print("[WARNING] quickWidgetSlider1 bulunamadı!")
+        if self.quickWidgetJoystick is None:
+            print("[WARNING] quickWidgetJoystick bulunamadı!")
         self.settingsButton: QPushButton = self.ui.findChild(QPushButton, "settingsButton")
         
         # Son frame'i saklamak için (kaydetme butonu için)
@@ -142,23 +192,27 @@ class MainWindow (QMainWindow):
 
 
        
-        self.quickWidgetSlider1.setResizeMode(QQuickWidget.SizeRootObjectToView)
-        self.quickWidgetSlider1.setClearColor(QColor("#19243d"))
-        self.quickWidgetSlider1.setAttribute(Qt.WA_TranslucentBackground)
-        self.quickWidgetSlider1.setStyleSheet("background: #19243d; border: none;")
-        self.quickWidgetSlider1.setSource(QUrl.fromLocalFile("tools/ModernCircularSlider.qml"))
+        if self.quickWidgetSlider1:
+            self.quickWidgetSlider1.setResizeMode(QQuickWidget.SizeRootObjectToView)
+            self.quickWidgetSlider1.setClearColor(QColor("#19243d"))
+            self.quickWidgetSlider1.setAttribute(Qt.WA_TranslucentBackground)
+            self.quickWidgetSlider1.setStyleSheet("background: #19243d; border: none;")
+            qml_path = get_resource_path("tools/ModernCircularSlider.qml")
+            self.quickWidgetSlider1.setSource(QUrl.fromLocalFile(qml_path))
         
 
-         #slider renk ayarları
-
-        self.rootSlider1 = self.quickWidgetSlider1.rootObject()
-        
-        self.rootSlider1.valueChanged.connect(self.on_slider_changed)
+        #slider renk ayarları
+        if self.quickWidgetSlider1:
+            self.rootSlider1 = self.quickWidgetSlider1.rootObject()
+            if self.rootSlider1:
+                self.rootSlider1.valueChanged.connect(self.on_slider_changed)
+            else:
+                print("[WARNING] rootSlider1 (root object) bulunamadı!")
 
     
         self.setGeometry(self.ui.geometry())
         
-        self.setWindowTitle("Otonoum Car UI")
+        self.setWindowTitle("Otonom Car UI")
 
          #Yolo Model
 
@@ -166,7 +220,8 @@ class MainWindow (QMainWindow):
         print ("[INFO] Using:", device)
       
         # Load model with verbose=False to reduce output
-        self.detector = ObjectDetector(model_path="lines.pt", device=device)
+        model_path = get_resource_path("linen.pt")
+        self.detector = ObjectDetector(model_path=model_path, device=device)
         self.device = device
         self.verbose = False  # Flag to control our own debug output
 
@@ -222,37 +277,39 @@ class MainWindow (QMainWindow):
         self.autonomous_mode = False
         self.otonoumBtn.clicked.connect(self.toggle_autonomous_mode)
         
-        # ══════════════════════════════════════════════════
-        # ✅ OPTIMIZED PID PARAMETERS
-        # ══════════════════════════════════════════════════
-        self.pid_kp = 25.0
-        self.pid_ki = 0.05
-        self.pid_kd = 10.0
-        self.pid_integral_limit = 30.0
-        self.pid_prev_error = 0.0
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ FINAL LINE FOLLOWING + ARC PID PARAMETERS (YOLO11 Segmentation)
+        # ═══════════════════════════════════════════════════════════════
+        # ROBOT PARAMETRELERİ
+        self.lane_width_cm = 27.0       # Gerçek şerit genişliği (cm)
+        self.base_speed = 50            # Temel hız (0-100 arası, PWM'e dönüştürülür)
+        self.min_pwm = 30               # Minimum PWM
+        self.max_pwm = 100              # Maximum PWM
+        
+        # PID PARAMETRELERİ
+        self.pid_kp = 0.07
+        self.pid_kd = 0.015
+        self.pid_ki = 0.0
+        self.k_heading = 5.0            # Heading error ağırlığı
+        
+        # PID DEĞİŞKENLERİ
+        self.pid_last_error = 0.0
         self.pid_integral = 0.0
         self.pid_last_time = time.time()
         
-        # Motor hızları - çok hızlı başlamıyacak
-        self.auto_base_speed = 40
-        self.auto_min_speed = 35
-        self.auto_max_speed = 50
-        self.smoothed_speed = self.auto_base_speed
+        # KALİBRASYON
+        self.pixel_per_cm = None
+        self.calibration_frames = []
+        self.calibration_done = False
         
-        # ROI
-        self.roi_top_ratio = 0.55
+        # ROI - Alt %25
+        self.roi_top_ratio = 0.75
         self.roi_bottom_ratio = 1.0
         
-        # Adaptive Road Width
-        self.estimated_half_road_width = None
-        self.road_width_alpha = 0.1
-        self.default_half_road_pct = 0.20
-        
-        # Yol kaybolma & Arama
+        # Arama modu
         self.last_line_seen = time.time()
-        self.no_line_timeout = 0.8
-        self.search_turn_speed = 20     # ✅ DÜŞÜRÜLDÜ: 25 → 20
-        self.search_dir = "left"
+        self.no_line_timeout = 0.5
+        self.search_turn_speed = 35
         self.last_seen_line_side = None
         
         # ✅ Socket spam kontrolü
@@ -365,19 +422,18 @@ class MainWindow (QMainWindow):
             
         # Check which keys are pressed and send appropriate commands
         if self.wasd_pressed['W']:
-            print("Sending command: F (Forward)")  # Debug print
+            
             self.socket_client.send_command("F")  # Forward
         elif self.wasd_pressed['S']:
-            print("Sending command: B (Backward)")  # Debug print
+            
             self.socket_client.send_command("B")  # Backward
         elif self.wasd_pressed['A']:
-            print("Sending command: L (Left)")  # Debug print
+            
             self.socket_client.send_command("L")  # Left
         elif self.wasd_pressed['D']:
-            print("Sending command: R (Right)")  # Debug print
+            
             self.socket_client.send_command("R")  # Right
         else:
-            print("Sending command: S (Stop)")  # Debug print
             self.socket_client.send_command("S")  # Stop
     
     def show_loading_dialog(self, message):
@@ -520,7 +576,16 @@ class MainWindow (QMainWindow):
         d = self.pid_kd * derivative
         self.pid_prev_error = error
 
-        return p + i + d, p, i, d
+        out = p + i + d
+        
+        # ✅ PID DEBUG
+        if DEBUG_VERBOSE:
+            debug_print("PID DEBUG", f"""
+  error: {error:.3f}
+  P: {p:.2f}  I: {i:.2f}  D: {d:.2f}
+  OUT: {out:.2f}  dt: {dt:.4f}""")
+        
+        return out, p, i, d
 
     def pid_reset(self):
         """PID durumunu sıfırla"""
@@ -532,10 +597,11 @@ class MainWindow (QMainWindow):
     def find_line_centers(self, masks, boxes, frame_shape):
         """
         YOLO'dan gelen tüm 'line' maskelerini ayrı ayrı işle.
-        Her maskenin ROI bölgesindeki x-center'ını bul.
+        Her maskenin ROI bölgesindeki x-center'ını ve eğimini (slope) bul.
         
-        Return: [(cx1, cy1, mask1), (cx2, cy2, mask2), ...]
+        Return: [(cx1, cy1, mask1, slope1), (cx2, cy2, mask2, slope2), ...]
                 Sol → Sağ sıralı (cx'e göre)
+                slope: vy/vx (negatif = sol çizgi, pozitif = sağ çizgi)
                 Boş liste → hiçbir çizgi bulunamadı
         """
         if masks is None or len(masks.data) == 0:
@@ -551,7 +617,7 @@ class MainWindow (QMainWindow):
             # Güven kontrolü — eşleşen box varsa conf kontrol et
             if boxes is not None and idx < len(boxes):
                 conf = boxes[idx].conf.item()
-                if conf < 0.40:
+                if conf < 0.2:
                     continue
             
             mask_np = mask_tensor.cpu().numpy()
@@ -577,10 +643,34 @@ class MainWindow (QMainWindow):
             
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
-            line_data.append((cx, cy, mask_binary))
+            
+            # ✅ Eğim hesabı (cv2.fitLine) — sol/sağ çizgi tespiti için
+            slope = None
+            try:
+                contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL,
+                                                cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    all_points = np.vstack(contours)
+                    if len(all_points) >= 10:
+                        [vx, vy, x0, y0] = cv2.fitLine(
+                            all_points, cv2.DIST_L2, 0, 0.01, 0.01
+                        )
+                        if abs(vx[0]) > 0.01:
+                            slope = float(vy[0] / vx[0])
+            except Exception:
+                slope = None
+            
+            line_data.append((cx, cy, mask_binary, slope))
         
         # Sol → Sağ sırala (cx'e göre)
         line_data.sort(key=lambda item: item[0])
+        
+        # ✅ LINE QUALITY DEBUG — her çizginin cx ve slope bilgisi
+        if DEBUG_VERBOSE and len(line_data) > 0:
+            for i, item in enumerate(line_data):
+                lcx, lcy, _, lslope = item
+                debug_print(f"LINE {i}", f"cx={lcx}, cy={lcy}, slope={lslope}")
+        
         return line_data
 
     def compute_steering_error(self, line_centers, frame_shape):
@@ -635,17 +725,66 @@ class MainWindow (QMainWindow):
         
         else:  # 1 çizgi
             cx = line_centers[0][0]
+            slope = line_centers[0][3]  # fitLine slope: negatif=sol, pozitif=sağ
             
-            if cx < center_x:
+            # ══════════════════════════════════════════════════
+            # ✅ IMPROVED: Slope smoothing + hysteresis
+            # ══════════════════════════════════════════════════
+            
+            # 1) Slope smoothing — son N frame'in ortalamasını al
+            if slope is not None:
+                self.slope_history.append(slope)
+            
+            if len(self.slope_history) > 0:
+                avg_slope = sum(self.slope_history) / len(self.slope_history)
+            else:
+                avg_slope = slope  # ilk frame
+            
+            # 2) Hysteresis ile karar — bir kez sol dediyse, kolay kolay değişmesin
+            SLOPE_HIGH = 0.6   # slope > 0.6 ise kesin sol/sağ
+            SLOPE_LOW  = 0.3   # slope < 0.3 ise belirsiz → fallback CX
+            
+            if avg_slope is not None and abs(avg_slope) > SLOPE_HIGH:
+                # Slope güçlü → eğime güven
+                is_left = (avg_slope > 0)
+            elif avg_slope is not None and abs(avg_slope) > SLOPE_LOW:
+                # Slope orta → hysteresis: son kararı koru
+                if self.last_is_left is not None:
+                    is_left = self.last_is_left
+                else:
+                    is_left = (avg_slope > 0)
+            else:
+                # Slope belirsiz veya None → fallback: CX konumuna bak
+                if self.last_is_left is not None:
+                    is_left = self.last_is_left  # hysteresis
+                else:
+                    is_left = (cx < center_x)
+            
+            self.last_is_left = is_left  # kararı sakla
+            
+            # ✅ 1-LINE DEBUG
+            if DEBUG_VERBOSE:
+                debug_print("1-LINE DEBUG", f"""
+  cx: {cx}  center_x: {center_x}
+  slope(raw): {slope}  slope(avg): {avg_slope if avg_slope is not None else 'N/A'}
+  is_left: {is_left}
+  half_road: {half_road:.1f}
+  slope_history: {list(self.slope_history)}""")
+            
+            if is_left:
                 # Sol çizgi → hedef sağa kaydır
-                target_cx = int(cx + half_road)
+                target_cx = int(cx + half_road * 0.40)
                 self.last_seen_line_side = "left"
                 mode_str = "1-LINE-L"
             else:
                 # Sağ çizgi → hedef sola kaydır
-                target_cx = int(cx - half_road)
+                target_cx = int(cx - half_road * 0.40)
                 self.last_seen_line_side = "right"
                 mode_str = "1-LINE-R"
+            
+            # ✅ Target CX sanity check
+            if DEBUG_VERBOSE:
+                debug_print("1-LINE TARGET", f"target_cx: {target_cx}  error_px: {target_cx - center_x:+d}")
             
             error = (target_cx - center_x) / half_w
             return error, target_cx, mode_str
@@ -713,21 +852,21 @@ class MainWindow (QMainWindow):
         return centers
 
     def apply_deadzone(self, speed):
-        """Uygulanan PID deadzone yumuşatması"""
-        if abs(speed) < 40:
-            return 0 if abs(speed) < 15 else (self.auto_min_speed if speed > 0 else -self.auto_min_speed)
-        return speed
+        """Motor hız filtresi — sadece gürültüyü sıfırla, dönüş farkını yeme"""
+        if abs(speed) < 5:
+            return 0  # Gürültü filtresi
+        return speed  # Min_speed zorlaması kaldırıldı — dönüşte yavaş tekerlek serbest
 
-    # ═══════════════════════════════════════════════════════════
-    # ✅ DETECTION RESULTS HANDLER - Separation of concerns
-    # ═══════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════
+    # ✅ FINAL LINE FOLLOWING - YOLO11 Segmentation + ARC PID
+    # ═══════════════════════════════════════════════════════════════
     def on_frame_processed(self, frame, results):
-        """YOLO'dan işlenmiş frame geldi"""
+        """YOLO'dan işlenmiş frame geldi - Final ARC PID versiyonu"""
         try:
             self.current_frame = frame.copy()
             self.last_detection_results = results
 
-            # Kendimiz FPS hesaplayalım (bloklamamak için process_frame çağırmıyoruz)
+            # FPS hesaplama
             fps = 0
             if hasattr(self, 'prev_time'):
                 current_time = time.time()
@@ -737,229 +876,224 @@ class MainWindow (QMainWindow):
                 self.prev_time = time.time()
 
             processed_frame = frame.copy()
-            if results is not None:
-                processed_frame = draw_bounding_boxes(processed_frame, results, self.detector.names)
-
             h, w = frame.shape[:2]
-            center_x = w // 2
+            image_center = w / 2
 
-            # ── Otonom Mod: Dual-Line PID → DIFF komutu gönder ──
+            # ── Otonom Mod: YOLO11 Segmentation + ARC PID ──
             if self.autonomous_mode and results is not None:
                 masks = results.masks if hasattr(results, 'masks') and results.masks is not None else None
-                boxes = results.boxes if hasattr(results, 'boxes') and results.boxes is not None else None
-
-                # En yüksek güven değerini bul (debug amaçlı)
-                best_conf = 0.0
-                if boxes is not None and len(boxes) > 0:
-                    for box in boxes:
-                        conf = box.conf.item()
-                        if conf > best_conf:
-                            best_conf = conf
-
-                # ── Tüm çizgi merkezlerini bul ──
-                line_centers = self.find_line_centers(masks, boxes, frame.shape)
                 
-                # ── Direksiyon hatasını hesapla ──
-                error, target_cx, mode_str = self.compute_steering_error(
-                    line_centers, frame.shape
-                )
+                if masks is None or len(masks.data) == 0:
+                    # Arama modu - çizgi yok
+                    self._handle_search_mode(processed_frame, h, w, fps)
+                    return
 
-                debug_text = []
-                num_lines = len(line_centers)
+                # İlk maskeyi al
+                mask = masks.data[0].cpu().numpy()
+                mask = (mask * 255).astype(np.uint8)
+                mask_resized = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
-                if error is not None and target_cx is not None:
-                    # ── Çizgi(ler) bulundu ──
-                    self.last_line_seen = time.time()
+                # ALT ROI (%25) - histogram hesaplama için
+                roi = mask_resized[int(h*0.75):h, :]
+                histogram = np.sum(roi, axis=0)
 
-                    # Look-ahead curvature analizi
-                    curvature = 0.0
-                    if line_centers:
-                        row_centers = self.get_dual_row_centers(
-                            line_centers, frame.shape, 5
-                        )
-                        if len(row_centers) >= 3:
-                            curvature = (row_centers[-1][0] - row_centers[0][0]) / w
-                            error += curvature * 0.15
+                mid = w // 2
+                left_x = np.argmax(histogram[:mid])
+                right_x = np.argmax(histogram[mid:]) + mid
+                lane_width_pixel = right_x - left_x
 
-                    # PID hesapla
-                    pid_out, p_val, i_val, d_val = self.pid_compute(error)
-                    pid_out = max(-100, min(100, pid_out))
-                    pid_out = float(np.tanh(pid_out / 90.0)) * 100.0
-
-                    # Curvature hız kontrolü (İptal edildi, düz hız ile dönüş hızı aynı)
-                    curvature_abs = abs(curvature)
-                    slow_factor = 1.0  # Düz hız ile aynı
-                    dynamic_base = self.auto_base_speed * slow_factor
-                    
-                    alpha_spd = 0.1
-                    self.smoothed_speed = (1 - alpha_spd) * self.smoothed_speed + alpha_spd * dynamic_base
-                    dynamic_base = self.smoothed_speed
-                    
-                    # Motor hızları (Yönler terslendi)
-                    speed_l = dynamic_base - pid_out
-                    speed_r = dynamic_base + pid_out
-                    
-                    speed_l = max(-self.auto_max_speed, min(self.auto_max_speed, speed_l))
-                    speed_r = max(-self.auto_max_speed, min(self.auto_max_speed, speed_r))
-
-                    speed_l = self.apply_deadzone(speed_l)
-                    speed_r = self.apply_deadzone(speed_r)
-
-                    # Arama yönünü güncelle (fallback)
-                    if error > 0.1:
-                        self.search_dir = "right"
-                    elif error < -0.1:
-                        self.search_dir = "left"
-
-                    # ✅ Socket spam kontrolü - en az 50ms ara
-                    now = time.time()
-                    cmd = f"DIFF,{round(speed_l)},{round(speed_r)}"
-                    if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
-                        self.last_sent_cmd = cmd
-                        self.last_cmd_send_time = now
-                        if self.socket_client and self.socket_client.connected:
-                            self.socket_client.send_command(f"DIFF,{speed_l:.1f},{speed_r:.1f}")
-
-                    # ─── VİZÜELİZASYON ───
-                    # Frame merkez çizgisi (beyaz)
-                    cv2.line(processed_frame, (center_x, 0), (center_x, h),
-                             (255, 255, 255), 1)
-                    
-                    # Çizgi merkezlerini çiz
-                    for idx, (lcx, lcy, _) in enumerate(line_centers):
-                        if idx == 0 and num_lines >= 2:
-                            # Sol çizgi → Mavi
-                            cv2.circle(processed_frame, (lcx, lcy), 8,
-                                       (255, 0, 0), -1)
-                            cv2.putText(processed_frame, "L",
-                                        (lcx - 5, lcy - 12),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                                        (255, 0, 0), 2)
-                        elif idx == num_lines - 1 and num_lines >= 2:
-                            # Sağ çizgi → Yeşil
-                            cv2.circle(processed_frame, (lcx, lcy), 8,
-                                       (0, 255, 0), -1)
-                            cv2.putText(processed_frame, "R",
-                                        (lcx - 5, lcy - 12),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                                        (0, 255, 0), 2)
-                        else:
-                            # Tek çizgi veya ekstra → Cyan
-                            cv2.circle(processed_frame, (lcx, lcy), 8,
-                                       (0, 255, 255), -1)
-                    
-                    # Hesaplanan hedef merkez (sarı)
-                    target_cy = line_centers[0][1] if line_centers else h // 2
-                    cv2.circle(processed_frame, (target_cx, target_cy), 12,
-                               (0, 255, 255), 3)
-                    cv2.drawMarker(processed_frame, (target_cx, target_cy),
-                                   (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
-                    
-                    # Offset oku (hedef → merkez)
-                    cv2.arrowedLine(processed_frame, (center_x, target_cy),
-                                    (target_cx, target_cy), (0, 0, 255), 2)
-                    
-                    # 1-çizgi modunda tahmini yol sınırı (kesikli çizgi)
-                    if num_lines == 1 and self.estimated_half_road_width is not None:
-                        lcx_single = line_centers[0][0]
-                        lcy_single = line_centers[0][1]
-                        half_r = int(self.estimated_half_road_width)
-                        # Tahmini karşı çizgi konumu
-                        if mode_str == "1-LINE-L":
-                            est_x = lcx_single + half_r * 2
-                        else:
-                            est_x = lcx_single - half_r * 2
-                        # Kesikli dikey çizgi
-                        for dy in range(0, h, 12):
-                            y1d = dy
-                            y2d = min(dy + 6, h)
-                            cv2.line(processed_frame, (est_x, y1d),
-                                     (est_x, y2d), (0, 200, 200), 1)
-
-                    # Mod göstergesi
-                    mode_color = {
-                        "2-LINE": (0, 255, 0),
-                        "1-LINE-L": (255, 165, 0),
-                        "1-LINE-R": (0, 165, 255),
-                    }.get(mode_str, (200, 200, 200))
-                    cv2.putText(processed_frame, mode_str, (w - 150, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, mode_color, 2)
-                    
-                    # Estimated half road width bilgisi
-                    hrw_text = f"HRW: {self.estimated_half_road_width:.0f}px" if self.estimated_half_road_width else "HRW: ---"
-                    
-                    debug_text = [
-                        f"MODE: {mode_str} | LINES: {num_lines}",
-                        f"TARGET: {target_cx:3d} | CENTER: {center_x:3d} | OFFSET: {target_cx-center_x:+4d}",
-                        f"ERROR: {error:+.3f} | CURVE: {curvature:+.3f}",
-                        f"PID: {pid_out:+.1f} (P:{p_val:+.2f} I:{i_val:+.2f} D:{d_val:+.2f})",
-                        f"MOTOR L: {speed_l:+6.1f} | MOTOR R: {speed_r:+6.1f}",
-                        f"BASE: {self.smoothed_speed:.1f} | CONF: {best_conf:.2f} | {hrw_text}",
-                    ]
-
-                else:
-                    # ── Arama Modu (0 çizgi) ──
-                    elapsed = time.time() - self.last_line_seen
-                    now = time.time()
-                    if self.socket_client and self.socket_client.connected:
-                        if elapsed < self.no_line_timeout:
-                            # Kısa süre: düz devam et
-                            cmd = f"DIFF,{self.auto_min_speed},{self.auto_min_speed}"
-                        elif elapsed < self.no_line_timeout * 3:
-                            # Arama: son görülen çizgiye doğru dön
-                            if self.last_seen_line_side == "left":
-                                # Sol çizgi kaybolduysa sola dön (çizgiyi bulmak için)
-                                cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
-                            elif self.last_seen_line_side == "right":
-                                # Sağ çizgi kaybolduysa sağa dön
-                                cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
-                            else:
-                                # Fallback: eski search_dir kullan
-                                if self.search_dir == "left":
-                                    cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
-                                else:
-                                    cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
-                        else:
-                            cmd = "S"
+                # Kalibrasyon (ilk 10 frame)
+                if not self.calibration_done:
+                    if lane_width_pixel > 10:  # Geçerli değer
+                        self.calibration_frames.append(lane_width_pixel)
+                        cv2.putText(processed_frame, f"KALIBRASYON: {len(self.calibration_frames)}/10", 
+                                   (w//2 - 150, h//2), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                         
-                        if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
-                            self.last_sent_cmd = cmd
-                            self.last_cmd_send_time = now
-                            self.socket_client.send_command(cmd)
+                        if len(self.calibration_frames) >= 10:
+                            self.pixel_per_cm = np.mean(self.calibration_frames) / self.lane_width_cm
+                            self.calibration_done = True
+                            print(f"[KALIBRASYON] Tamamlandı: {self.pixel_per_cm:.2f} pixel/cm")
+                    
+                    # Vizualizasyon ve göster
+                    self._display_frame(processed_frame, fps)
+                    return
 
-                    # Arama modu vizüelizasyonu
-                    search_side = self.last_seen_line_side or self.search_dir
-                    cv2.putText(processed_frame, f"SEARCH ({search_side})",
-                                (w - 220, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                                (0, 0, 255), 2)
-                    cv2.putText(processed_frame, "ARAMA MODU", (20, h - 40),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                # Şerit merkezi hesaplama
+                lane_center = (left_x + right_x) / 2
+                error_px = image_center - lane_center
+                error_cm = error_px / self.pixel_per_cm
 
-                    debug_text = [
-                        f"SEARCH | CONF: {best_conf:.2f} | SIDE: {search_side}",
-                        f"Elapsed: {elapsed:.1f}s / timeout: {self.no_line_timeout:.1f}s",
-                    ]
+                # Heading error hesaplama (çizgi eğimi)
+                ys, xs = np.where(roi > 0)
+                heading_error = 0.0
+                if len(xs) > 10:
+                    try:
+                        fit = np.polyfit(xs, ys, 1)
+                        slope = fit[0]
+                        heading_error = -np.arctan(slope)
+                    except:
+                        heading_error = 0.0
 
-                # ROI çizgisi
-                roi_y = int(h * self.roi_top_ratio)
-                cv2.line(processed_frame, (0, roi_y), (w, roi_y),
-                         (255, 255, 0), 1)
+                # Toplam hata = Pozisyon hatası + Heading düzeltmesi
+                total_error = error_cm + self.k_heading * heading_error
+                self.last_line_seen = time.time()
+
+                # Son görülen tarafı kaydet
+                if error_cm > 0:
+                    self.last_seen_line_side = "left"
+                else:
+                    self.last_seen_line_side = "right"
+
+                # PID hesaplama
+                current_time = time.time()
+                dt = current_time - self.pid_last_time
+                self.pid_last_time = current_time
+
+                if dt <= 0:
+                    dt = 0.001
+
+                derivative = (total_error - self.pid_last_error) / dt
+                self.pid_integral += total_error * dt
                 
-                # DEBUG YAZISI
+                # Integral limit
+                self.pid_integral = max(-10, min(10, self.pid_integral))
+
+                pid_out = (self.pid_kp * total_error + 
+                          self.pid_kd * derivative + 
+                          self.pid_ki * self.pid_integral)
+                
+                # Yumuşatma (tanh) - sınırlama
+                turn = np.tanh(pid_out)
+                self.pid_last_error = total_error
+
+                # ARC Motor hesabı - Tank dönüş YOK
+                # turn pozitif = sağa dön (sol motor hızlı, sağ yavaş)
+                left_ratio = 1.0 + turn
+                right_ratio = 1.0 - turn
+
+                # Normalizasyon (maksimum 1.0 olacak şekilde)
+                max_ratio = max(abs(left_ratio), abs(right_ratio))
+                if max_ratio > 1.0:
+                    left_ratio /= max_ratio
+                    right_ratio /= max_ratio
+
+                # PWM hesaplama (0-255 arası)
+                left_pwm = self.base_speed * left_ratio
+                right_pwm = self.base_speed * right_ratio
+
+                # Clip to valid range
+                left_pwm = np.clip(left_pwm, self.min_pwm, self.max_pwm)
+                right_pwm = np.clip(right_pwm, self.min_pwm, self.max_pwm)
+
+                # Komut gönder (spam kontrollü)
+                now = time.time()
+                cmd = f"DIFF,{int(left_pwm)},{int(right_pwm)}"
+                if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
+                    self.last_sent_cmd = cmd
+                    self.last_cmd_send_time = now
+                    if self.socket_client and self.socket_client.connected:
+                        self.socket_client.send_command(cmd)
+                        if DEBUG_VERBOSE:
+                            debug_print("MOTOR", f"L:{int(left_pwm)} R:{int(right_pwm)} | Error:{error_cm:.2f}cm | Turn:{turn:.3f}")
+
+                # CSV Log
+                debug_log_csv(error_cm, turn, left_pwm, right_pwm, "ARC", 2, heading_error)
+
+                # VİZÜELİZASYON
+                # ROI bölgesi
+                roi_y = int(h * 0.75)
+                cv2.rectangle(processed_frame, (0, roi_y), (w, h), (255, 255, 0), 2)
+                
+                # Histogram üzerinde sol/sağ çizgiler
+                cv2.circle(processed_frame, (left_x, roi_y + 20), 8, (255, 0, 0), -1)
+                cv2.circle(processed_frame, (right_x, roi_y + 20), 8, (0, 255, 0), -1)
+                cv2.circle(processed_frame, (int(lane_center), roi_y + 20), 10, (0, 255, 255), 2)
+                
+                # Merkez çizgisi
+                cv2.line(processed_frame, (int(image_center), 0), (int(image_center), h), (255, 255, 255), 1)
+                
+                # Hata oku
+                cv2.arrowedLine(processed_frame, (int(image_center), h//2), 
+                               (int(lane_center), h//2), (0, 0, 255), 3)
+
+                # Debug metinleri
+                debug_texts = [
+                    f"MODE: ARC-FINAL | L:{left_x} R:{right_x} W:{lane_width_pixel}px",
+                    f"CENTER: {lane_center:.1f} | ERROR: {error_cm:.2f}cm",
+                    f"HEADING: {heading_error:.3f} | TOTAL_ERR: {total_error:.2f}",
+                    f"PID: {pid_out:.3f} | TURN: {turn:.3f}",
+                    f"MOTOR L:{int(left_pwm)} R:{int(right_pwm)}",
+                    f"P/CM: {self.pixel_per_cm:.2f} | BASE: {self.base_speed}"
+                ]
+                
                 y_offset = 30
-                for i, text in enumerate(debug_text):
+                for i, text in enumerate(debug_texts):
                     cv2.putText(processed_frame, text, (10, y_offset + i * 25),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                                (200, 200, 200), 1)
-                
-                # Merkez çizgisi (ROI'den alta)
-                cv2.line(processed_frame, (center_x, roi_y), (center_x, h),
-                         (0, 165, 255), 1)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             elif self.autonomous_mode and results is None:
-                # Otonom ama algılama yok
-                if self.socket_client and self.socket_client.connected:
-                    self.socket_client.send_command("S")
+                self._handle_search_mode(processed_frame, h, w, fps)
+                return
+
+            # Frame göster
+            self._display_frame(processed_frame, fps)
+
+        except Exception as e:
+            print(f"[ERROR] on_frame_processed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _handle_search_mode(self, processed_frame, h, w, fps):
+        """Arama modu - çizgi kaybolduğunda"""
+        elapsed = time.time() - self.last_line_seen
+        now = time.time()
+        
+        if self.socket_client and self.socket_client.connected:
+            if elapsed < self.no_line_timeout:
+                # Kısa süre: düz devam
+                cmd = f"DIFF,{int(self.base_speed * 0.5)},{int(self.base_speed * 0.5)}"
+            elif elapsed < self.no_line_timeout * 3:
+                # Arama: son görülen yöne dön
+                if self.last_seen_line_side == "left":
+                    cmd = f"DIFF,{self.search_turn_speed},{-self.search_turn_speed}"
+                else:
+                    cmd = f"DIFF,{-self.search_turn_speed},{self.search_turn_speed}"
+            else:
+                cmd = "S"
+            
+            if cmd != self.last_sent_cmd and (now - self.last_cmd_send_time) > self.cmd_send_interval:
+                self.last_sent_cmd = cmd
+                self.last_cmd_send_time = now
+                self.socket_client.send_command(cmd)
+
+        # Arama vizualizasyonu
+        search_text = f"SEARCH | {elapsed:.1f}s | Last: {self.last_seen_line_side or '?'})"
+        cv2.putText(processed_frame, search_text, (w//2 - 200, h//2), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+        
+        self._display_frame(processed_frame, fps)
+
+    def _display_frame(self, processed_frame, fps):
+        """Frame'i Qt label'a göster"""
+        try:
+            # FPS göster
+            mode_text = "AUTO" if self.autonomous_mode else "MANUAL"
+            gpu_memory_percent = f"{self.vram_usage_percent:.0f}%" if self.vram_usage_percent is not None else "--%"
+            self.fpsLabel.setText(f"FPS: {fps:.0f} | Mode: {mode_text} | VRAM: {gpu_memory_percent}")
+
+            # Convert to QImage
+            h, w, ch = processed_frame.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(processed_frame.data, w, h, bytes_per_line, QImage.Format_BGR888)
+
+            # Display
+            self.CamLabel.setPixmap(QPixmap.fromImage(qt_image).scaled(
+                self.CamLabel.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            ))
+        except Exception as e:
+            print(f"[ERROR] _display_frame: {e}")
 
             # Update FPS display
             gpu_memory_percent = f"{self.vram_usage_percent:.0f}%" if self.vram_usage_percent is not None else "--%"
@@ -1101,6 +1235,14 @@ class MainWindow (QMainWindow):
             self.last_sent_cmd = None
             self.last_seen_line_side = None
             self.estimated_half_road_width = None
+            self.slope_history.clear()
+            self.last_is_left = None
+            
+            # ✅ Debug log header yazılsın (yeni oturum)
+            if DEBUG_LOG_TO_FILE:
+                with open(DEBUG_LOG_PATH, "a") as f:
+                    f.write(f"# === NEW SESSION {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+                    f.write("# timestamp,error,pid_out,speed_l,speed_r,mode,num_lines,slope\n")
             
             # Disable manual control when in autonomous mode
             if hasattr(self, 'quickWidgetJoystick'):
@@ -1189,7 +1331,17 @@ class MainWindow (QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
+    # PyInstaller için multiprocessing desteği
+    import multiprocessing
+    multiprocessing.freeze_support()
+    
+    # Windows görev çubuğu için App ID ayarla
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OtonomCarUI.1.0")
+    
     app = QApplication(sys.argv)
+    app.setApplicationName("Otonom Car UI")
+    icon_path = get_resource_path("icons/luxury-car.ico")
+    app.setWindowIcon(QIcon(icon_path))
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
