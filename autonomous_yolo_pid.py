@@ -158,29 +158,37 @@ def apply_speed():
 def set_motor_arc(left_pwm, right_pwm):
     """
     ARC motor kontrolü - farklı PWM değerleri ile dönüş (Tank dönüş yok)
-    Her iki motor da her zaman ileri yönde çalışır.
-    left_pwm: Sol motor PWM (0-100)
-    right_pwm: Sağ motor PWM (0-100)
+    left_pwm: Sol motor PWM (-100 to 100), negatif = geri
+    right_pwm: Sağ motor PWM (-100 to 100), negatif = geri
     """
     global speed
 
-    # PWM'leri sınırla (0-100)
-    left_pwm = max(0, min(100, left_pwm))
-    right_pwm = max(0, min(100, right_pwm))
+    # Motor yönlerini belirle (negatif = geri, pozitif = ileri)
+    left_forward = left_pwm >= 0
+    right_forward = right_pwm >= 0
 
-    # Motor yönleri (her zaman ileri)
-    _motor_a(True)   # Sol motor ileri
-    _motor_b(True)   # Sağ motor ileri
+    # PWM'leri mutlak değer olarak sınırla (0-100)
+    left_duty = max(0, min(100, abs(left_pwm)))
+    right_duty = max(0, min(100, abs(right_pwm)))
+
+    # Motor yönlerini ayarla
+    _motor_a(left_forward)   # Sol motor
+    _motor_b(right_forward)  # Sağ motor
 
     # PWM uygula (motor scale'leri ile)
-    duty_a = max(0, min(100, left_pwm * MOTOR_A_SCALE))
-    duty_b = max(0, min(100, right_pwm * MOTOR_B_SCALE))
+    duty_a = max(0, min(100, left_duty * MOTOR_A_SCALE))
+    duty_b = max(0, min(100, right_duty * MOTOR_B_SCALE))
 
     pwmA.ChangeDutyCycle(duty_a)
     pwmB.ChangeDutyCycle(duty_b)
 
-    speed = (left_pwm + right_pwm) / 2  # Ortalama hız
-    print(f"[MOTOR ARC] L:{int(left_pwm)} R:{int(right_pwm)}")
+    speed = (abs(left_pwm) + abs(right_pwm)) / 2  # Ortalama hız
+    dir_str = ""
+    if not left_forward and not right_forward:
+        dir_str = " [GERI]"
+    elif not left_forward or not right_forward:
+        dir_str = " [DONUS]"
+    print(f"[MOTOR ARC] L:{int(left_pwm)} R:{int(right_pwm)}{dir_str}")
 
 
 def set_differential_speed(speed_left, speed_right):
