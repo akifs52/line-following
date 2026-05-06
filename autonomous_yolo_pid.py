@@ -25,6 +25,7 @@ import socket
 import threading
 import signal
 import sys
+from collections import deque
 
 # =============================================
 #  G P I O   P İ N L E R İ
@@ -50,6 +51,7 @@ MOTOR_B_SCALE = 1.0
 # =============================================
 HOST = "0.0.0.0"
 PORT = 5005
+COMMAND_BUFFER_SIZE = 4
 TIMEOUT_SEC = 3.0       # İnaktiflik süresi → dur
 
 # =============================================
@@ -58,6 +60,7 @@ TIMEOUT_SEC = 3.0       # İnaktiflik süresi → dur
 speed = 40               # Manuel hız (%)
 last_cmd_time = time.time()
 running = True
+command_buffer = None
 
 # =============================================
 #  G P I O   K U R U L U M
@@ -223,6 +226,75 @@ def set_differential_speed(speed_left, speed_right):
 # =============================================
 #  K O M U T   İ Ş L E Y İ C İ
 # =============================================
+class CommandRingBuffer:
+    """Thread-safe ring buffer: motor tarafinda eski komutlar birikmez."""
+
+    def __init__(self, max_size):
+        self._items = deque(maxlen=max_size)
+        self._condition = threading.Condition()
+
+    def push(self, command, immediate=False):
+        with self._condition:
+            if immediate:
+                self._items.clear()
+            elif command.startswith("DIFF,"):
+                self._items = deque(
+                    (item for item in self._items if not item.startswith("DIFF,")),
+                    maxlen=self._items.maxlen,
+                )
+            elif command.startswith("PWM"):
+                self._items = deque(
+                    (item for item in self._items if not item.startswith("PWM")),
+                    maxlen=self._items.maxlen,
+                )
+
+            dropped = len(self._items) == self._items.maxlen
+            self._items.append(command)
+            self._condition.notify()
+            return dropped
+
+    def pop_latest(self):
+        with self._condition:
+            while running and not self._items:
+                self._condition.wait(timeout=0.1)
+            if not self._items:
+                return None
+
+            command = self._items[-1]
+            self._items.clear()
+            return command
+
+    def clear(self):
+        with self._condition:
+            self._items.clear()
+            self._condition.notify_all()
+
+
+def is_immediate_command(data):
+    return data in ("S", "stop", "SHUTDOWN")
+
+
+def enqueue_command(data):
+    global last_cmd_time
+    last_cmd_time = time.time()
+
+    if command_buffer is None:
+        handle_command(data)
+        return
+
+    dropped = command_buffer.push(data, immediate=is_immediate_command(data))
+    if dropped:
+        print("[TCP] Komut buffer dolu, eski komut atildi")
+
+
+def command_worker_loop():
+    while running:
+        data = command_buffer.pop_latest()
+        if data is None:
+            continue
+        handle_command(data)
+
+
 def handle_command(data):
     """TCP'den gelen komutları işle"""
     global speed, last_cmd_time
@@ -323,7 +395,7 @@ def tcp_server():
                     data = line.strip().replace("\x00", "")
                     if not data:
                         continue
-                    handle_command(data)
+                    enqueue_command(data)
 
         except Exception as e:
             print(f"[TCP] Bağlantı hatası: {e}")
@@ -346,6 +418,8 @@ def shutdown(signum=None, frame=None):
     global running
     print("\n[ÇIKIŞ] Kapatılıyor...")
     running = False
+    if command_buffer is not None:
+        command_buffer.clear()
     stop()
     pwmA.stop()
     pwmB.stop()
@@ -355,6 +429,7 @@ def shutdown(signum=None, frame=None):
 
 
 if __name__ == "__main__":
+    command_buffer = CommandRingBuffer(COMMAND_BUFFER_SIZE)
     signal.signal(signal.SIGINT, shutdown)
 
     print("\n" + "=" * 55)
@@ -373,6 +448,7 @@ if __name__ == "__main__":
 
     # Failsafe thread
     threading.Thread(target=failsafe_loop, daemon=True).start()
+    threading.Thread(target=command_worker_loop, daemon=True).start()
 
     # TCP sunucu (ana thread)
     try:
