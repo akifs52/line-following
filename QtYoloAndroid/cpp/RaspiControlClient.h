@@ -25,6 +25,9 @@ class RaspiControlClient : public QObject
     Q_PROPERTY(double leftMotorSpeed READ leftMotorSpeed NOTIFY pidDataChanged)
     Q_PROPERTY(double rightMotorSpeed READ rightMotorSpeed NOTIFY pidDataChanged)
     Q_PROPERTY(double lineCenterX READ lineCenterX NOTIFY pidDataChanged)
+    Q_PROPERTY(double headingError READ headingError NOTIFY pidDataChanged)
+    Q_PROPERTY(double totalError READ totalError NOTIFY pidDataChanged)
+    Q_PROPERTY(double turnRatio READ turnRatio NOTIFY pidDataChanged)
     Q_PROPERTY(double dynamicCenter READ dynamicCenter NOTIFY pidDataChanged)
     Q_PROPERTY(double targetCenter READ targetCenter NOTIFY pidDataChanged)
 
@@ -45,6 +48,9 @@ public:
     double leftMotorSpeed() const { return m_currentLeftSpeed; }
     double rightMotorSpeed() const { return m_currentRightSpeed; }
     double lineCenterX() const { return m_currentLineCenterX; }
+    double headingError() const { return m_currentHeadingError; }
+    double totalError() const { return m_currentTotalError; }
+    double turnRatio() const { return m_currentTurnRatio; }
     double dynamicCenter() const { return m_currentDynamicCenter; }
     double targetCenter() const { return m_currentTargetCenter; }
 
@@ -87,6 +93,14 @@ private:
         Both,
     };
 
+    // Durum makinesi için tracking state
+    enum class TrackingState {
+        TwoLine,      // 2 şerit arası PID
+        OneLineArc,   // 1 şerit görülüyor → yay dönüşü
+        NoLineFwd,    // Hiç şerit yok, kısa süre düz git
+        NoLineStop,   // Uzun süre şerit yok → dur
+    };
+
     void setLastError(const QString &errorText);
     void setAutonomousModeInternal(bool enabled);
     void setAutonomousPendingInternal(bool pending);
@@ -100,6 +114,9 @@ private:
     double pidCompute(double error, qint64 nowMs);
     double applyDeadzone(double speedValue) const;
     bool sendRawCommand(const QString &command, bool throttle);
+    // Yeni durum makinesi yardımcıları
+    bool dispatchMotor(double left, double right);
+    bool dispatchRaw(const QString &cmd, bool throttle);
 
     QTcpSocket m_socket;
     QElapsedTimer m_commandTimer;
@@ -117,10 +134,14 @@ private:
     qint64 m_pidLastMs = 0;
     double m_pidPrevError = 0.0;
     double m_pidIntegral = 0.0;
+    double m_pidLastError = 0.0;
     double m_smoothedSpeed = 40.0;
-    double m_estimatedHalfRoadWidth = -1.0;
-    LineSide m_lastSeenLineSide = LineSide::Unknown;
+    LineSide m_lastSeenSide = LineSide::Unknown;
     QString m_searchDir = QStringLiteral("left");
+    // Durum makinesi değişkenleri
+    TrackingState m_trackingState = TrackingState::TwoLine;
+    qint64 m_arcStartMs = 0;
+    qint64 m_noLineStartMs = 0;
 
     // ── CX-based hysteresis (mirror of main.py slope hysteresis) ──
     QVector<double> m_cxHistory;           // son N frame'in cx değerleri (smoothing)
@@ -135,6 +156,35 @@ private:
     // ── Debug flag ──
     bool m_debugEnabled = true;
 
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ FINAL ARC PID PARAMETERS (matching main.py)
+    // ═══════════════════════════════════════════════════════════════
+    static constexpr double kLaneWidthCm = 25.0;
+    static constexpr double kBaseSpeed = 35.0;
+    static constexpr double kMinPwm = 30.0;
+    static constexpr double kMaxPwm = 100.0;
+    static constexpr double kPidKp = 0.08;
+    static constexpr double kPidKd = 0.02;
+    static constexpr double kPidKi = 0.0;
+    static constexpr double kKHeading = 3.0;
+    static constexpr int kCalibrationFrames = 10;
+    static constexpr double kRoiTopRatio = 0.35;
+
+    // State variables
+    bool m_calibrationDone = false;
+    int m_calibrationFrameCount = 0;
+    double m_calibrationSum = 0.0;
+    double m_referenceLaneWidth = 0.0;
+    double m_pixelPerCm = 0.0;
+
+
+
+    // New methods for ARC PID
+    void extractLaneCentersFromMask(const QVariantList &masks, QVector<double> &leftCenters, QVector<double> &rightCenters);
+    double computeHeadingError(const QVariantList &masks, int imageWidth, int imageHeight);
+    void resetPidController();
+    void handleSearchMode(qint64 nowMs);
+
     // Visualization data (updated each frame during autonomous)
     double m_currentPidError = 0.0;
     double m_currentPidOutput = 0.0;
@@ -144,4 +194,8 @@ private:
     double m_currentLineCenterX = 0.5; // Normalized 0-1
     double m_currentDynamicCenter = 0.5; // Dynamic center with bias
     double m_currentTargetCenter = 0.5;  // Target center (avgCx + offset)
+    double m_currentHeadingError = 0.0;   // Heading error in radians
+    double m_currentTotalError = 0.0;     // Total error (position + heading)
+    double m_currentTurnRatio = 0.0;      // Turn ratio after tanh
+    QString m_currentMode = "MANUAL";     // Current mode: ARC-FINAL, SEARCH, etc.
 };

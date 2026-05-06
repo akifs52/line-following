@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <optional>
+#include <limits>
 
 // NCNN includes for all platforms with GPU support
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
@@ -20,6 +22,9 @@
 namespace {
 constexpr float kMinThreshold = 0.001f;
 constexpr float kMaxThreshold = 0.99f;
+constexpr float kMaskThreshold = 0.50f;
+constexpr double kRoiTopRatio = 0.35;
+constexpr int kPolygonSampleBins = 24;
 
 // NCNN constants for all platforms
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MAC) || defined(Q_OS_WIN)
@@ -28,6 +33,308 @@ constexpr float kNmsThreshold = 0.45f;
 constexpr float kNormVals[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
 constexpr int kModelRetryIntervalMs = 1500;
 constexpr int kMaxModelRetryAttempts = 10;
+constexpr int kMaxCandidateDetections = 4;
+constexpr int kMaxOverlayDetections = 2;
+constexpr float kMinLaneGapNorm = 0.08f;
+
+inline float sigmoidf(float value)
+{
+    return 1.0f / (1.0f + std::exp(-value));
+}
+
+void populateMaskGeometry(
+    YoloEngine::Detection &det,
+    const QVector<float> &maskCoeffs,
+    const ncnn::Mat &prototypes,
+    int srcW,
+    int srcH,
+    int padLeft,
+    int padTop,
+    float scale)
+{
+    det.frameWidth = srcW;
+    det.frameHeight = srcH;
+    det.roiTopRatio = float(kRoiTopRatio);
+
+    if (maskCoeffs.isEmpty() || prototypes.dims != 3 || prototypes.c <= 0 || prototypes.w <= 0 || prototypes.h <= 0) {
+        return;
+    }
+
+    const int protoW = prototypes.w;
+    const int protoH = prototypes.h;
+    const int coeffCount = (std::min)(int(maskCoeffs.size()), prototypes.c);
+    if (coeffCount <= 0) {
+        return;
+    }
+
+    QVector<float> logits(protoW * protoH, 0.0f);
+    for (int c = 0; c < coeffCount; ++c) {
+        const float coeff = maskCoeffs[c];
+        const ncnn::Mat channel = prototypes.channel(c);
+        for (int y = 0; y < protoH; ++y) {
+            const float *srcRow = channel.row(y);
+            float *dstRow = logits.data() + (y * protoW);
+            for (int x = 0; x < protoW; ++x) {
+                dstRow[x] += coeff * srcRow[x];
+            }
+        }
+    }
+
+    const double roiTopPx = double(srcH) * kRoiTopRatio;
+
+    const double boxLeft = (std::max)(0.0, det.rect.left() - 4.0);
+    const double boxTop = (std::max)(0.0, det.rect.top() - 4.0);
+    const double boxRight = (std::min)(double(srcW - 1), det.rect.right() + 4.0);
+    const double boxBottom = (std::min)(double(srcH - 1), det.rect.bottom() + 4.0);
+    if (boxRight <= boxLeft || boxBottom <= boxTop) {
+        return;
+    }
+
+    QVector<double> minXs(kPolygonSampleBins, std::numeric_limits<double>::infinity());
+    QVector<double> maxXs(kPolygonSampleBins, -std::numeric_limits<double>::infinity());
+    QVector<double> xSums(kPolygonSampleBins, 0.0);
+    QVector<double> ySums(kPolygonSampleBins, 0.0);
+    QVector<int> sampleCounts(kPolygonSampleBins, 0);
+
+    double sumX = 0.0;
+    double sumY = 0.0;
+    double sumXY = 0.0;
+    double sumX2 = 0.0;
+    int fitCount = 0;
+
+    for (int y = 0; y < protoH; ++y) {
+        for (int x = 0; x < protoW; ++x) {
+            const float probability = sigmoidf(logits[y * protoW + x]);
+            if (probability < kMaskThreshold) {
+                continue;
+            }
+
+            const double inputX = (double(x) + 0.5) * double(kInputSize) / double(protoW);
+            const double inputY = (double(y) + 0.5) * double(kInputSize) / double(protoH);
+            const double srcX = (inputX - double(padLeft)) / double(scale);
+            const double srcY = (inputY - double(padTop)) / double(scale);
+
+            if (srcX < 0.0 || srcY < 0.0 || srcX >= double(srcW) || srcY >= double(srcH)) {
+                continue;
+            }
+            if (srcX < boxLeft || srcX > boxRight || srcY < boxTop || srcY > boxBottom) {
+                continue;
+            }
+
+            const double xNorm = srcX / double(srcW);
+            const double yNorm = srcY / double(srcH);
+            const int bin = (std::clamp)(int(yNorm * double(kPolygonSampleBins)), 0, kPolygonSampleBins - 1);
+            minXs[bin] = (std::min)(minXs[bin], xNorm);
+            maxXs[bin] = (std::max)(maxXs[bin], xNorm);
+            xSums[bin] += xNorm;
+            ySums[bin] += yNorm;
+            sampleCounts[bin] += 1;
+
+            if (srcY >= roiTopPx) {
+                sumX += srcX;
+                sumY += srcY;
+                sumXY += srcX * srcY;
+                sumX2 += srcX * srcX;
+                ++fitCount;
+            }
+        }
+    }
+
+    QVector<QPointF> leftBoundary;
+    QVector<QPointF> rightBoundary;
+    leftBoundary.reserve(kPolygonSampleBins);
+    rightBoundary.reserve(kPolygonSampleBins);
+    const double minRibbonHalfWidth = 3.0 / double(srcW);
+    const double maxRibbonHalfWidth = 14.0 / double(srcW);
+
+    for (int bin = 0; bin < kPolygonSampleBins; ++bin) {
+        if (sampleCounts[bin] == 0
+            || !std::isfinite(minXs[bin])
+            || !std::isfinite(maxXs[bin])
+            || maxXs[bin] < minXs[bin]) {
+            continue;
+        }
+
+        const double yNorm = ySums[bin] / double(sampleCounts[bin]);
+        const double meanX = xSums[bin] / double(sampleCounts[bin]);
+        const double spread = maxXs[bin] - minXs[bin];
+        const double ribbonHalfWidth = (std::clamp)(spread * 0.35, minRibbonHalfWidth, maxRibbonHalfWidth);
+        leftBoundary.push_back(QPointF((std::clamp)(meanX - ribbonHalfWidth, 0.0, 1.0), yNorm));
+        rightBoundary.push_front(QPointF((std::clamp)(meanX + ribbonHalfWidth, 0.0, 1.0), yNorm));
+    }
+
+    if (leftBoundary.size() >= 2 && rightBoundary.size() >= 2) {
+        det.polygon = leftBoundary;
+        det.polygon += rightBoundary;
+    }
+
+    if (fitCount > 0) {
+        det.lineCenterX = float((sumX / double(fitCount)) / double(srcW));
+    } else if (srcW > 0) {
+        det.lineCenterX = float(det.rect.center().x() / double(srcW));
+    }
+
+    if (fitCount > 10) {
+        const double denom = double(fitCount) * sumX2 - sumX * sumX;
+        if (std::abs(denom) > 1e-6) {
+            const double slope = (double(fitCount) * sumXY - sumX * sumY) / denom;
+            det.headingError = float(-std::atan(slope));
+        }
+    }
+}
+
+float detectionCenterX(const YoloEngine::Detection &det)
+{
+    if (std::isfinite(det.lineCenterX) && det.lineCenterX > 0.0f && det.lineCenterX < 1.0f) {
+        return det.lineCenterX;
+    }
+    if (det.frameWidth > 0) {
+        return float(det.rect.center().x() / double(det.frameWidth));
+    }
+    return -1.0f;
+}
+
+void populateCombinedLaneMetrics(QVector<YoloEngine::Detection> &detections)
+{
+    struct LineSample {
+        int index = -1;
+        float centerX = -1.0f;
+        float heading = 0.0f;
+        float score = 0.0f;
+    };
+
+    QVector<LineSample> leftSamples, rightSamples;
+    leftSamples.reserve(detections.size());
+    rightSamples.reserve(detections.size());
+
+    for (int index = 0; index < detections.size(); ++index) {
+        const YoloEngine::Detection &det = detections[index];
+        const float centerX = detectionCenterX(det);
+        if (!std::isfinite(centerX) || centerX <= 0.0f || centerX >= 1.0f) {
+            continue;
+        }
+
+        LineSample sample;
+        sample.index = index;
+        sample.centerX = centerX;
+        sample.heading = det.headingError;
+        sample.score = det.score;
+
+        if (centerX < 0.5f)
+            leftSamples.push_back(sample);
+        else
+            rightSamples.push_back(sample);
+    }
+
+    // En iyi tespiti seç (en yüksek score, aynı taraftan birer tane)
+    auto pickBest = [](QVector<LineSample> &samples) -> std::optional<LineSample> {
+        if (samples.isEmpty()) return std::nullopt;
+        auto best = std::max_element(samples.begin(), samples.end(),
+            [](const LineSample &a, const LineSample &b) { return a.score < b.score; });
+        return *best;
+    };
+
+    auto leftBest  = pickBest(leftSamples);
+    auto rightBest = pickBest(rightSamples);
+
+    float laneLeftX = -1.0f, laneRightX = -1.0f, laneCenter = 0.5f, combinedHeading = 0.0f;
+
+    if (leftBest && rightBest) {
+        // ✅ İKİ ÇİZGİ (her taraftan biri)
+        laneLeftX  = leftBest->centerX;
+        laneRightX = rightBest->centerX;
+
+        if ((laneRightX - laneLeftX) < kMinLaneGapNorm) {
+            // Çok yakınsa sanal genişlik ekle
+            const float virtualLaneWidth = 0.25f;
+            laneLeftX  = laneLeftX - virtualLaneWidth * 0.5f;
+            laneRightX = laneRightX + virtualLaneWidth * 0.5f;
+        }
+
+        float headingSum = 0.0f;
+        int headingCount = 0;
+        if (std::isfinite(leftBest->heading)) {
+            headingSum += leftBest->heading;
+            ++headingCount;
+        }
+        if (std::isfinite(rightBest->heading)) {
+            headingSum += rightBest->heading;
+            ++headingCount;
+        }
+        combinedHeading = headingCount > 0 ? headingSum / float(headingCount) : 0.0f;
+        laneCenter = (laneLeftX + laneRightX) * 0.5f;
+    }
+    else if (leftBest || rightBest) {
+        // ✅ TEK ÇİZGİ: Sanal ikinci çizgi
+        const LineSample &only = leftBest ? leftBest.value() : rightBest.value();
+        const float virtualLaneWidth = 0.25f;
+
+        if (only.centerX < 0.5f) {
+            laneLeftX  = only.centerX;
+            laneRightX = only.centerX + virtualLaneWidth;
+        } else {
+            laneRightX = only.centerX;
+            laneLeftX  = only.centerX - virtualLaneWidth;
+        }
+        laneCenter = (laneLeftX + laneRightX) * 0.5f;
+        combinedHeading = std::isfinite(only.heading) ? only.heading : 0.0f;
+    }
+    else {
+        return;  // Hiç çizgi yok
+    }
+
+    // Tüm detection'lara metrics ata
+    for (YoloEngine::Detection &det : detections) {
+        det.laneLeftX = laneLeftX;
+        det.laneRightX = laneRightX;
+        det.laneCenterX = laneCenter;
+        det.hasLaneMetrics = true;
+        det.headingError = combinedHeading;
+    }
+}
+
+QVector<YoloEngine::Detection> selectLaneDetections(const QVector<YoloEngine::Detection> &detections)
+{
+    if (detections.size() <= kMaxOverlayDetections) {
+        return detections;
+    }
+
+    struct RankedDetection {
+        int index = -1;
+        float centerX = -1.0f;
+        float score = 0.0f;
+    };
+
+    QVector<RankedDetection> left, right;
+    left.reserve(detections.size());
+    right.reserve(detections.size());
+
+    for (int index = 0; index < detections.size(); ++index) {
+        RankedDetection item;
+        item.index = index;
+        item.centerX = detectionCenterX(detections[index]);
+        item.score = detections[index].score;
+        if (item.centerX < 0.5f)
+            left.push_back(item);
+        else
+            right.push_back(item);
+    }
+
+    auto pickBest = [](QVector<RankedDetection> &samples) -> std::optional<RankedDetection> {
+        if (samples.isEmpty()) return std::nullopt;
+        auto best = std::max_element(samples.begin(), samples.end(),
+            [](const RankedDetection &a, const RankedDetection &b) { return a.score < b.score; });
+        return *best;
+    };
+
+    QVector<YoloEngine::Detection> selected;
+    selected.reserve(kMaxOverlayDetections);
+    auto leftBest = pickBest(left);
+    auto rightBest = pickBest(right);
+    if (leftBest) selected.push_back(detections[leftBest->index]);
+    if (rightBest) selected.push_back(detections[rightBest->index]);
+    return selected;
+}
 #endif
 } // namespace
 
@@ -162,6 +469,26 @@ QVariantList YoloEngine::toVariantList(const QVector<Detection> &detections, con
         box.insert(QStringLiteral("score"), det.score);
         box.insert(QStringLiteral("label"), m_classNames.value(det.label, QStringLiteral("line")));
         box.insert(QStringLiteral("color"), QStringLiteral("#4ade80"));
+        box.insert(QStringLiteral("lineCenterX"), det.lineCenterX);
+
+        QVariantList points;
+        points.reserve(det.polygon.size());
+        for (const QPointF &point : det.polygon) {
+            QVariantMap pointMap;
+            pointMap.insert(QStringLiteral("x"), qBound(0.0, point.x(), 1.0));
+            pointMap.insert(QStringLiteral("y"), qBound(0.0, point.y(), 1.0));
+            points.push_back(pointMap);
+        }
+
+        box.insert(QStringLiteral("points"), points);
+        box.insert(QStringLiteral("laneLeftX"), det.laneLeftX);
+        box.insert(QStringLiteral("laneRightX"), det.laneRightX);
+        box.insert(QStringLiteral("laneCenterX"), det.laneCenterX);
+        box.insert(QStringLiteral("headingError"), det.headingError);
+        box.insert(QStringLiteral("roiTopRatio"), det.roiTopRatio);
+        box.insert(QStringLiteral("hasLaneMetrics"), det.hasLaneMetrics);
+        box.insert(QStringLiteral("frameWidth"), det.frameWidth > 0 ? det.frameWidth : frameSize.width());
+        box.insert(QStringLiteral("frameHeight"), det.frameHeight > 0 ? det.frameHeight : frameSize.height());
         boxes.push_back(box);
     }
 
@@ -417,9 +744,17 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
         return detections;
     }
 
+    ncnn::Mat out1;
+    const bool hasMaskOutput = (ex.extract("out1", out1) == 0);
+
     if (out0.dims != 2 || out0.h < 5 || out0.w <= 0) {
         return detections;
     }
+
+    const int maskCoeffOffset = 5;
+    const int maskCoeffCount = (hasMaskOutput && out1.dims == 3)
+        ? (std::max)(0, (std::min)(out1.c, out0.h - maskCoeffOffset))
+        : 0;
 
     const float *xPtr = out0.row(0);
     const float *yPtr = out0.row(1);
@@ -427,7 +762,12 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
     const float *hPtr = out0.row(3);
     const float *scorePtr = out0.row(4);
 
-    QVector<Detection> proposals;
+    struct Proposal {
+        Detection detection;
+        QVector<float> maskCoeffs;
+    };
+
+    QVector<Proposal> proposals;
     proposals.reserve(128);
 
     for (int i = 0; i < out0.w; ++i) {
@@ -449,10 +789,10 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
         float x1 = (cx + bw * 0.5f - float(left)) / scale;
         float y1 = (cy + bh * 0.5f - float(top)) / scale;
 
-        x0 = std::clamp(x0, 0.0f, float(srcW - 1));
-        y0 = std::clamp(y0, 0.0f, float(srcH - 1));
-        x1 = std::clamp(x1, 0.0f, float(srcW - 1));
-        y1 = std::clamp(y1, 0.0f, float(srcH - 1));
+        x0 = (std::clamp)(x0, 0.0f, float(srcW - 1));
+        y0 = (std::clamp)(y0, 0.0f, float(srcH - 1));
+        x1 = (std::clamp)(x1, 0.0f, float(srcW - 1));
+        y1 = (std::clamp)(y1, 0.0f, float(srcH - 1));
 
         const float boxW = x1 - x0;
         const float boxH = y1 - y0;
@@ -460,28 +800,49 @@ QVector<YoloEngine::Detection> YoloEngine::runNcnnInference(const QImage &frame,
             continue;
         }
 
-        Detection det;
-        det.rect = QRectF(x0, y0, boxW, boxH);
-        det.score = score;
-        det.label = 0;
-        proposals.push_back(det);
+        Proposal proposal;
+        proposal.detection.rect = QRectF(x0, y0, boxW, boxH);
+        proposal.detection.score = score;
+        proposal.detection.label = 0;
+        proposal.detection.frameWidth = srcW;
+        proposal.detection.frameHeight = srcH;
+        if (maskCoeffCount > 0) {
+            proposal.maskCoeffs.reserve(maskCoeffCount);
+            for (int coeffIndex = 0; coeffIndex < maskCoeffCount; ++coeffIndex) {
+                proposal.maskCoeffs.push_back(out0.row(maskCoeffOffset + coeffIndex)[i]);
+            }
+        }
+        proposals.push_back(std::move(proposal));
     }
 
-    std::sort(proposals.begin(), proposals.end(), [](const Detection &a, const Detection &b) {
-        return a.score > b.score;
+    std::sort(proposals.begin(), proposals.end(), [](const Proposal &a, const Proposal &b) {
+        return a.detection.score > b.detection.score;
     });
 
-    QVector<int> picked;
-    nmsSortedBboxes(proposals, picked, kNmsThreshold);
-
-    // En fazla 2 tespit al, en yüksek confidence değerine sahip olanlar
-    const qsizetype maxDetections = 2;
-    const qsizetype keepCount = std::min<qsizetype>(picked.size(), maxDetections);
-    detections.reserve(keepCount);
-    for (qsizetype i = 0; i < keepCount; ++i) {
-        detections.push_back(proposals[picked[i]]);
+    QVector<Detection> proposalDetections;
+    proposalDetections.reserve(proposals.size());
+    for (const Proposal &proposal : proposals) {
+        proposalDetections.push_back(proposal.detection);
     }
 
+    QVector<int> picked;
+    nmsSortedBboxes(proposalDetections, picked, kNmsThreshold);
+
+    const qsizetype candidateCount = (std::min)(picked.size(), qsizetype(kMaxCandidateDetections));
+    QVector<Detection> candidates;
+    candidates.reserve(candidateCount);
+    for (qsizetype i = 0; i < candidateCount; ++i) {
+        const Proposal &proposal = proposals[picked[i]];
+        Detection det = proposal.detection;
+        if (maskCoeffCount > 0 && proposal.maskCoeffs.size() == maskCoeffCount) {
+            populateMaskGeometry(det, proposal.maskCoeffs, out1, srcW, srcH, left, top, scale);
+        }
+        candidates.push_back(std::move(det));
+    }
+
+    populateCombinedLaneMetrics(candidates);
+    detections = selectLaneDetections(candidates);
+    populateCombinedLaneMetrics(detections);
     return detections;
 }
 

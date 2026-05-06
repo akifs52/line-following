@@ -6,6 +6,7 @@
 #include <QFutureWatcher>
 #include <QImage>
 #include <QMutex>
+#include <QPointF>
 #include <QRectF>
 #include <QSize>
 #include <QStringList>
@@ -55,11 +56,21 @@ signals:
     void modelLoadedChanged();
     void modelStatusChanged();
 
-private:
+public:
     struct Detection {
         QRectF rect;
+        QVector<QPointF> polygon;
         float score = 0.0f;
         int label = 0;
+        float lineCenterX = -1.0f;
+        float laneLeftX = -1.0f;
+        float laneRightX = -1.0f;
+        float laneCenterX = -1.0f;
+        float headingError = 0.0f;
+        float roiTopRatio = 0.35f;
+        bool hasLaneMetrics = false;
+        int frameWidth = 0;
+        int frameHeight = 0;
     };
 
     struct InferenceResult {
@@ -67,6 +78,7 @@ private:
         QSize frameSize;
     };
 
+private:
     void updateModelLoadedState();
     void setModelStatus(const QString &status);
     void setInferenceBusy(bool busy);
@@ -82,7 +94,7 @@ private:
 #endif
 
     bool m_enabled = true;
-    float m_scoreThreshold = 0.35f; // Minimum 30% confidence for detections
+    float m_scoreThreshold = 0.20f; // Minimum 30% confidence for detections
     double m_fps = 0.0;
     bool m_modelLoaded = false;
     QString m_modelStatus = QStringLiteral("Model assets: checking");

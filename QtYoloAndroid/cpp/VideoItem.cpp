@@ -15,18 +15,44 @@ QRectF VideoItem::contentRect() const
     return m_contentRect;
 }
 
+void VideoItem::updateContentRect()
+{
+    QMutexLocker locker(&m_mutex);
+    if (m_frame.isNull()) return;
+    QRectF targetRect = boundingRect();
+    QRectF sourceRect(0, 0, m_frame.width(), m_frame.height());
+    qreal scale = qMin(targetRect.width() / sourceRect.width(),
+                      targetRect.height() / sourceRect.height());
+    qreal w = sourceRect.width() * scale;
+    qreal h = sourceRect.height() * scale;
+    qreal x = targetRect.x() + (targetRect.width() - w) / 2;
+    qreal y = targetRect.y() + (targetRect.height() - h) / 2;
+    QRectF destRect(x, y, w, h);
+    if (m_contentRect != destRect) {
+        m_contentRect = destRect;
+        locker.unlock();
+        emit contentRectChanged();
+    }
+}
+
 void VideoItem::setFrame(const QImage &img)
 {
     if (img.isNull()) {
         qDebug() << "[VideoItem] setFrame called with null image";
         return;
     }
-    
-    QMutexLocker locker(&m_mutex);
-    m_frame = img.copy();
-    locker.unlock();
+    {
+        QMutexLocker locker(&m_mutex);
+        m_frame = img.copy();
+    }
+    updateContentRect();
     update();
-    
+}
+
+void VideoItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    QQuickPaintedItem::geometryChange(newGeometry, oldGeometry);
+    updateContentRect();
 }
 
 void VideoItem::paint(QPainter *painter)

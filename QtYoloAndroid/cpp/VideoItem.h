@@ -18,11 +18,13 @@ public:
 
 protected:
     void paint(QPainter *painter) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
 
 signals:
     void contentRectChanged();
 
 private:
+    void updateContentRect();
     QImage m_frame;
     QMutex m_mutex;
     QRectF m_contentRect;
