@@ -519,37 +519,30 @@ ApplicationWindow {
                         ctx.stroke()
                         ctx.setLineDash([])
 
-                        // PID değerleri her zaman göster (otonom modda veya manuel modda)
+                        // Tek çizgi takip görseli
                         if (primary && primary.hasLaneMetrics) {
                             const centerX = rect.x + rect.width * 0.5
-                            const laneLeftX = rect.x + primary.laneLeftX * rect.width
-                            const laneRightX = rect.x + primary.laneRightX * rect.width
-                            const targetX = rect.x + controlClient.lineCenterX * rect.width
                             const roiMarkerY = roiTopY + 20
 
-                            ctx.beginPath()
-                            ctx.moveTo(laneLeftX, roiMarkerY)
-                            ctx.lineTo(laneRightX, roiMarkerY)
-                            ctx.strokeStyle = "#22c55e"
-                            ctx.lineWidth = 2
-                            ctx.stroke()
+                            // Hangi çizgi tespit edildi?
+                            const hasLeft = primary.laneLeftX >= 0
+                            const hasRight = primary.laneRightX >= 0
+                            const lineX = hasLeft
+                                          ? (rect.x + primary.laneLeftX * rect.width)
+                                          : (rect.x + primary.laneRightX * rect.width)
+                            const lineLabel = hasLeft ? "L" : "R"
+                            const lineColor = hasLeft ? "#3b82f6" : "#22c55e"
 
+                            // Çizgi noktası
                             ctx.beginPath()
-                            ctx.arc(laneLeftX, roiMarkerY, 7, 0, Math.PI * 2)
-                            ctx.fillStyle = "#3b82f6"
+                            ctx.arc(lineX, roiMarkerY, 9, 0, Math.PI * 2)
+                            ctx.fillStyle = lineColor
                             ctx.fill()
+                            ctx.font = "bold 8px sans-serif"
+                            ctx.fillStyle = "#fff"
+                            ctx.fillText(lineLabel, lineX - 3, roiMarkerY + 3)
 
-                            ctx.beginPath()
-                            ctx.arc(laneRightX, roiMarkerY, 7, 0, Math.PI * 2)
-                            ctx.fillStyle = "#22c55e"
-                            ctx.fill()
-
-                            ctx.beginPath()
-                            ctx.arc(targetX, roiMarkerY, 9, 0, Math.PI * 2)
-                            ctx.strokeStyle = "#facc15"
-                            ctx.lineWidth = 2
-                            ctx.stroke()
-
+                            // Merkez çizgisi (kesikli)
                             ctx.beginPath()
                             ctx.setLineDash([8, 6])
                             ctx.moveTo(centerX, rect.y)
@@ -559,59 +552,61 @@ ApplicationWindow {
                             ctx.stroke()
                             ctx.setLineDash([])
 
+                            // Mesafe çizgisi (merkezden çizgiye)
+                            const distLineY = rect.y + rect.height * 0.58
                             ctx.beginPath()
-                            ctx.moveTo(centerX, rect.y + rect.height * 0.58)
-                            ctx.lineTo(targetX, rect.y + rect.height * 0.58)
-                            ctx.strokeStyle = "#f87171"
-                            ctx.lineWidth = 3
+                            ctx.moveTo(centerX, distLineY)
+                            ctx.lineTo(lineX, distLineY)
+                            const isDanger = controlClient.guidanceMode === "DANGER"
+                            ctx.strokeStyle = isDanger ? "#ef4444" : "#f87171"
+                            ctx.lineWidth = isDanger ? 4 : 2
                             ctx.stroke()
 
+                            // Ok ucu
                             ctx.beginPath()
-                            ctx.moveTo(targetX, rect.y + rect.height * 0.58)
-                            ctx.lineTo(targetX - 10, rect.y + rect.height * 0.58 - 6)
-                            ctx.lineTo(targetX - 10, rect.y + rect.height * 0.58 + 6)
+                            const arrowDir = lineX < centerX ? 1 : -1
+                            ctx.moveTo(lineX, distLineY)
+                            ctx.lineTo(lineX + arrowDir * 10, distLineY - 6)
+                            ctx.lineTo(lineX + arrowDir * 10, distLineY + 6)
                             ctx.closePath()
-                            ctx.fillStyle = "#f87171"
+                            ctx.fillStyle = isDanger ? "#ef4444" : "#f87171"
                             ctx.fill()
 
+                            // Telemetri paneli
                             const panelX = rect.x + 6
-                            const panelY = rect.y + rect.height - 72
+                            const panelY = rect.y + rect.height - 58
                             ctx.fillStyle = "rgba(0, 0, 0, 0.78)"
-                            ctx.fillRect(panelX, panelY, 152, 66)
-                            ctx.strokeStyle = "#22c55e"
+                            ctx.fillRect(panelX, panelY, 152, 52)
+                            ctx.strokeStyle = lineColor
                             ctx.lineWidth = 1
-                            ctx.strokeRect(panelX, panelY, 152, 66)
+                            ctx.strokeRect(panelX, panelY, 152, 52)
 
                             ctx.font = "bold 9px monospace"
                             ctx.fillStyle = "#22c55e"
-                            ctx.fillText("Ecm:" + controlClient.pidError.toFixed(2), panelX + 4, panelY + 13)
-                            ctx.fillText("PID:" + controlClient.pidOutput.toFixed(2), panelX + 78, panelY + 13)
-                            ctx.fillText("Hd:" + controlClient.headingError.toFixed(2), panelX + 4, panelY + 27)
-                            ctx.fillText("Trn:" + controlClient.turnRatio.toFixed(2), panelX + 78, panelY + 27)
-                            ctx.fillText("L:" + controlClient.leftMotorSpeed.toFixed(0), panelX + 4, panelY + 41)
-                            ctx.fillText("R:" + controlClient.rightMotorSpeed.toFixed(0), panelX + 78, panelY + 41)
-                            ctx.fillText("B:" + controlClient.baseSpeed.toFixed(0), panelX + 4, panelY + 55)
-                            const isArcMode = controlClient.guidanceMode.startsWith("ARC-")
-                            ctx.fillStyle = isArcMode
-                                           ? "#22c55e"
-                                           : (controlClient.guidanceMode === "CALIBRATING" ? "#facc15" : "#f87171")
-                            const lineStatus = isArcMode ? controlClient.guidanceMode.replace("ARC-", "") : controlClient.guidanceMode.substring(0, 4)
-                            ctx.fillText(lineStatus, panelX + 78, panelY + 55)
+                            ctx.fillText("D:" + controlClient.wallDistance.toFixed(1) + "cm", panelX + 4, panelY + 13)
+                            ctx.fillText("Trn:" + controlClient.turnRatio.toFixed(2), panelX + 78, panelY + 13)
+                            ctx.fillText("L:" + controlClient.leftMotorSpeed.toFixed(0), panelX + 4, panelY + 27)
+                            ctx.fillText("R:" + controlClient.rightMotorSpeed.toFixed(0), panelX + 78, panelY + 27)
+                            ctx.fillText("B:" + controlClient.baseSpeed.toFixed(0), panelX + 4, panelY + 41)
 
+                            // Mode badge
+                            const mode = controlClient.guidanceMode
+                            const isTracking = mode.startsWith("LINE-")
+                            ctx.fillStyle = isTracking
+                                           ? "#22c55e"
+                                           : (mode === "CALIBRATING" ? "#facc15" : "#f87171")
+                            ctx.fillText(mode, panelX + 78, panelY + 41)
+
+                            // Sağ alt köşe mode paneli
                             const modePanelX = rect.x + rect.width - 58
                             const modePanelY = rect.y + rect.height - 28
-                            const mode = controlClient.guidanceMode
-                            const shortMode = mode.replace("-LINE", "").replace("SEARCH", "S")
                             ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
                             ctx.fillRect(modePanelX, modePanelY, 54, 22)
-                            ctx.strokeStyle = "#22c55e"
+                            ctx.strokeStyle = lineColor
                             ctx.strokeRect(modePanelX, modePanelY, 54, 22)
                             ctx.font = "bold 9px sans-serif"
-                            ctx.fillStyle = "#22c55e"
-                            ctx.fillText(shortMode, modePanelX + 4, modePanelY + 14)
-
-                            ctx.font = "bold 10px sans-serif"
-                            ctx.fillText(shortMode, centerX - 14, rect.y + 14)
+                            ctx.fillStyle = lineColor
+                            ctx.fillText(mode, modePanelX + 4, modePanelY + 14)
                         }
                     }
                 }

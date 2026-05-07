@@ -28,7 +28,7 @@ class RaspiControlClient : public QObject
     Q_PROPERTY(double headingError READ headingError NOTIFY pidDataChanged)
     Q_PROPERTY(double totalError READ totalError NOTIFY pidDataChanged)
     Q_PROPERTY(double turnRatio READ turnRatio NOTIFY pidDataChanged)
-    Q_PROPERTY(double dynamicCenter READ dynamicCenter NOTIFY pidDataChanged)
+    Q_PROPERTY(double wallDistance READ wallDistance NOTIFY pidDataChanged)
     Q_PROPERTY(double targetCenter READ targetCenter NOTIFY pidDataChanged)
 
 public:
@@ -51,7 +51,7 @@ public:
     double headingError() const { return m_currentHeadingError; }
     double totalError() const { return m_currentTotalError; }
     double turnRatio() const { return m_currentTurnRatio; }
-    double dynamicCenter() const { return m_currentDynamicCenter; }
+    double wallDistance() const { return m_currentWallDistance; }
     double targetCenter() const { return m_currentTargetCenter; }
 
     Q_INVOKABLE void connectToHost(const QString &host, int port);
@@ -78,6 +78,7 @@ private slots:
     void onDisconnected();
     void onErrorOccurred(QAbstractSocket::SocketError socketError);
     void onAutonomousWatchdog();
+    void onCommandBufferTimeout();
 
 private:
     struct SteeringDecision {
@@ -114,6 +115,7 @@ private:
     double pidCompute(double error, qint64 nowMs);
     double applyDeadzone(double speedValue) const;
     bool sendRawCommand(const QString &command, bool throttle);
+    bool sendRawCommandImpl(const QString &command);  // direkt socket write
     // Yeni durum makinesi yardımcıları
     bool dispatchMotor(double left, double right);
     bool dispatchRaw(const QString &cmd, bool throttle);
@@ -121,11 +123,18 @@ private:
     QTcpSocket m_socket;
     QElapsedTimer m_commandTimer;
     QTimer m_autonomousWatchdog;
-    QString m_lastError;
-    int m_speed = 0;
+    QTimer m_commandBufferTimer;  // buffer'daki komutu rate-limit sonunda gönder
+    static constexpr qint64 kMinCommandIntervalMs = 30;  // 25-30 ms gönderim sınırı
     qint64 m_lastCommandMs = 0;
+
+    // ── Command buffer & deduplication ──
+    QString m_commandBuffer;      // rate-limit dolana kadar biriken son komut
+    QString m_lastSentCommand;    // son gönderilen komut (duplicate kontrolü)
+    qint64 m_lastSentCommandMs = 0;
     bool m_autonomousMode = false;
     bool m_autonomousPending = false;
+    QString m_lastError;
+    int m_speed = 0;
     QString m_guidanceMode = QStringLiteral("MANUAL");
     QString m_lastAutonomousCommand;
     qint64 m_lastAutonomousCommandMs = 0;
@@ -157,25 +166,22 @@ private:
     bool m_debugEnabled = true;
 
     // ═══════════════════════════════════════════════════════════════
-    // ✅ FINAL ARC PID PARAMETERS (matching main.py)
+    // ✅ TEK ÇİZGİ REAKTİF TAKİP
+    // Hangi çizgiyi görüyorsan ona göre mesafe tut
+    // 5cm'den yakınsa sert kaç, uzaktaysa düz git
     // ═══════════════════════════════════════════════════════════════
-    static constexpr double kLaneWidthCm = 25.0;
+    static constexpr double kLaneWidthCm = 27.0;
+    static constexpr double kWallTargetCm = 13.5;  // Hedef mesafe (yol/2)
+    static constexpr double kDangerZoneCm = 5.0;   // Bu mesafenin altında sert dönüş
     static constexpr double kBaseSpeed = 35.0;
     static constexpr double kMinPwm = 30.0;
     static constexpr double kMaxPwm = 100.0;
-    static constexpr double kPidKp = 0.08;
-    static constexpr double kPidKd = 0.02;
-    static constexpr double kPidKi = 0.0;
-    static constexpr double kKHeading = 3.0;
-    static constexpr int kCalibrationFrames = 10;
+    static constexpr double kSteerGain = 0.12;     // Mesafe→dönüş oranı (cm başına)
+
     static constexpr double kRoiTopRatio = 0.35;
 
     // State variables
-    bool m_calibrationDone = false;
-    int m_calibrationFrameCount = 0;
-    double m_calibrationSum = 0.0;
-    double m_referenceLaneWidth = 0.0;
-    double m_pixelPerCm = 0.0;
+    double m_pixelPerCm = 0.0;  // Varsayılan tahmin ilk frame'de set edilir
 
 
 
@@ -192,7 +198,7 @@ private:
     double m_currentLeftSpeed = 0.0;
     double m_currentRightSpeed = 0.0;
     double m_currentLineCenterX = 0.5; // Normalized 0-1
-    double m_currentDynamicCenter = 0.5; // Dynamic center with bias
+    double m_currentWallDistance = 0.0;   // Çizgiden mesafe (cm)
     double m_currentTargetCenter = 0.5;  // Target center (avgCx + offset)
     double m_currentHeadingError = 0.0;   // Heading error in radians
     double m_currentTotalError = 0.0;     // Total error (position + heading)

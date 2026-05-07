@@ -33,8 +33,8 @@ constexpr float kNmsThreshold = 0.45f;
 constexpr float kNormVals[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
 constexpr int kModelRetryIntervalMs = 1500;
 constexpr int kMaxModelRetryAttempts = 10;
-constexpr int kMaxCandidateDetections = 4;
-constexpr int kMaxOverlayDetections = 2;
+constexpr int kMaxCandidateDetections = 1;
+constexpr int kMaxOverlayDetections = 1;
 constexpr float kMinLaneGapNorm = 0.08f;
 
 inline float sigmoidf(float value)
@@ -196,144 +196,54 @@ float detectionCenterX(const YoloEngine::Detection &det)
 
 void populateCombinedLaneMetrics(QVector<YoloEngine::Detection> &detections)
 {
-    struct LineSample {
-        int index = -1;
-        float centerX = -1.0f;
-        float heading = 0.0f;
-        float score = 0.0f;
-    };
+    // TEK ÇİZGİ: En iyi tespiti bul, sol/sağ olarak işaretle
+    if (detections.isEmpty()) return;
 
-    QVector<LineSample> leftSamples, rightSamples;
-    leftSamples.reserve(detections.size());
-    rightSamples.reserve(detections.size());
-
-    for (int index = 0; index < detections.size(); ++index) {
-        const YoloEngine::Detection &det = detections[index];
-        const float centerX = detectionCenterX(det);
-        if (!std::isfinite(centerX) || centerX <= 0.0f || centerX >= 1.0f) {
-            continue;
-        }
-
-        LineSample sample;
-        sample.index = index;
-        sample.centerX = centerX;
-        sample.heading = det.headingError;
-        sample.score = det.score;
-
-        if (centerX < 0.5f)
-            leftSamples.push_back(sample);
-        else
-            rightSamples.push_back(sample);
+    // En yüksek score'lu tespiti seç
+    int bestIdx = 0;
+    for (int i = 1; i < detections.size(); ++i) {
+        if (detections[i].score > detections[bestIdx].score)
+            bestIdx = i;
     }
 
-    // En iyi tespiti seç (en yüksek score, aynı taraftan birer tane)
-    auto pickBest = [](QVector<LineSample> &samples) -> std::optional<LineSample> {
-        if (samples.isEmpty()) return std::nullopt;
-        auto best = std::max_element(samples.begin(), samples.end(),
-            [](const LineSample &a, const LineSample &b) { return a.score < b.score; });
-        return *best;
-    };
+    const float centerX = detectionCenterX(detections[bestIdx]);
+    if (!std::isfinite(centerX) || centerX <= 0.0f || centerX >= 1.0f)
+        return;
 
-    auto leftBest  = pickBest(leftSamples);
-    auto rightBest = pickBest(rightSamples);
+    const float heading = std::isfinite(detections[bestIdx].headingError)
+                              ? detections[bestIdx].headingError : 0.0f;
 
-    float laneLeftX = -1.0f, laneRightX = -1.0f, laneCenter = 0.5f, combinedHeading = 0.0f;
-
-    if (leftBest && rightBest) {
-        // ✅ İKİ ÇİZGİ (her taraftan biri)
-        laneLeftX  = leftBest->centerX;
-        laneRightX = rightBest->centerX;
-
-        if ((laneRightX - laneLeftX) < kMinLaneGapNorm) {
-            // Çok yakınsa sanal genişlik ekle
-            const float virtualLaneWidth = 0.25f;
-            laneLeftX  = laneLeftX - virtualLaneWidth * 0.5f;
-            laneRightX = laneRightX + virtualLaneWidth * 0.5f;
-        }
-
-        float headingSum = 0.0f;
-        int headingCount = 0;
-        if (std::isfinite(leftBest->heading)) {
-            headingSum += leftBest->heading;
-            ++headingCount;
-        }
-        if (std::isfinite(rightBest->heading)) {
-            headingSum += rightBest->heading;
-            ++headingCount;
-        }
-        combinedHeading = headingCount > 0 ? headingSum / float(headingCount) : 0.0f;
-        laneCenter = (laneLeftX + laneRightX) * 0.5f;
-    }
-    else if (leftBest || rightBest) {
-        // ✅ TEK ÇİZGİ: Sanal ikinci çizgi
-        const LineSample &only = leftBest ? leftBest.value() : rightBest.value();
-        const float virtualLaneWidth = 0.25f;
-
-        if (only.centerX < 0.5f) {
-            laneLeftX  = only.centerX;
-            laneRightX = only.centerX + virtualLaneWidth;
-        } else {
-            laneRightX = only.centerX;
-            laneLeftX  = only.centerX - virtualLaneWidth;
-        }
-        laneCenter = (laneLeftX + laneRightX) * 0.5f;
-        combinedHeading = std::isfinite(only.heading) ? only.heading : 0.0f;
-    }
-    else {
-        return;  // Hiç çizgi yok
+    // Çizgi ekranın sol yarısındaysa laneLeftX, sağ yarısındaysa laneRightX
+    float laneLeftX = -1.0f;
+    float laneRightX = -1.0f;
+    if (centerX < 0.5f) {
+        laneLeftX = centerX;
+    } else {
+        laneRightX = centerX;
     }
 
-    // Tüm detection'lara metrics ata
+    // Tüm detection'lara ata
     for (YoloEngine::Detection &det : detections) {
         det.laneLeftX = laneLeftX;
         det.laneRightX = laneRightX;
-        det.laneCenterX = laneCenter;
+        det.laneCenterX = centerX;
         det.hasLaneMetrics = true;
-        det.headingError = combinedHeading;
+        det.headingError = heading;
     }
 }
 
 QVector<YoloEngine::Detection> selectLaneDetections(const QVector<YoloEngine::Detection> &detections)
 {
-    if (detections.size() <= kMaxOverlayDetections) {
-        return detections;
+    if (detections.isEmpty()) return {};
+    if (detections.size() <= kMaxOverlayDetections) return detections;
+
+    // En yüksek score'lu tek detection'ı döndür
+    int bestIdx = 0;
+    for (int i = 1; i < detections.size(); ++i) {
+        if (detections[i].score > detections[bestIdx].score)
+            bestIdx = i;
     }
-
-    struct RankedDetection {
-        int index = -1;
-        float centerX = -1.0f;
-        float score = 0.0f;
-    };
-
-    QVector<RankedDetection> left, right;
-    left.reserve(detections.size());
-    right.reserve(detections.size());
-
-    for (int index = 0; index < detections.size(); ++index) {
-        RankedDetection item;
-        item.index = index;
-        item.centerX = detectionCenterX(detections[index]);
-        item.score = detections[index].score;
-        if (item.centerX < 0.5f)
-            left.push_back(item);
-        else
-            right.push_back(item);
-    }
-
-    auto pickBest = [](QVector<RankedDetection> &samples) -> std::optional<RankedDetection> {
-        if (samples.isEmpty()) return std::nullopt;
-        auto best = std::max_element(samples.begin(), samples.end(),
-            [](const RankedDetection &a, const RankedDetection &b) { return a.score < b.score; });
-        return *best;
-    };
-
-    QVector<YoloEngine::Detection> selected;
-    selected.reserve(kMaxOverlayDetections);
-    auto leftBest = pickBest(left);
-    auto rightBest = pickBest(right);
-    if (leftBest) selected.push_back(detections[leftBest->index]);
-    if (rightBest) selected.push_back(detections[rightBest->index]);
-    return selected;
+    return { detections[bestIdx] };
 }
 #endif
 } // namespace

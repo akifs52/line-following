@@ -7,7 +7,6 @@
 
 namespace {
 // Temel zamanlama sabitleri
-constexpr qint64 kMinCommandIntervalMs = 50;
 constexpr qint64 kAutonomousWatchdogIntervalMs = 80;
 constexpr qint64 kDetectionFeedTimeoutMs = 350;
 constexpr double kDetectionScoreThreshold = 0.30;
@@ -16,11 +15,10 @@ constexpr double kLineMergeThreshold = 0.30;
 // ═══════════════════════════════════════════════════════════════
 // ✅ LOCAL CONSTANTS (not in header)
 // ═══════════════════════════════════════════════════════════════
-constexpr double kSingleLineTargetCm = 8.0; // Tek çizgide sabit hedef mesafe
-double clampErrorCm(double e) { return qBound(-20.0, e, 20.0); } // ECM clamp
+// Wall-following: kWallTargetCm header'da tanımlı (12.5 cm)
+double clampErrorCm(double e) { return qBound(-15.0, e, 15.0); } // ECM clamp
 constexpr qint64 kNoLineTimeoutMs = 500;   // Çizgi kaybı timeout
 constexpr double kSearchTurnSpeed = 35.0;  // Arama dönüş hızı
-constexpr double kPidIntegralMax = 10.0;   // Integral limit
 } // namespace
 
 RaspiControlClient::RaspiControlClient(QObject *parent)
@@ -30,6 +28,8 @@ RaspiControlClient::RaspiControlClient(QObject *parent)
     connect(&m_socket, &QTcpSocket::disconnected, this, &RaspiControlClient::onDisconnected);
     connect(&m_socket, &QTcpSocket::errorOccurred, this, &RaspiControlClient::onErrorOccurred);
     connect(&m_autonomousWatchdog, &QTimer::timeout, this, &RaspiControlClient::onAutonomousWatchdog);
+    connect(&m_commandBufferTimer, &QTimer::timeout, this, &RaspiControlClient::onCommandBufferTimeout);
+    m_commandBufferTimer.setSingleShot(true);
 
     m_commandTimer.start();
     m_autonomousWatchdog.setInterval(int(kAutonomousWatchdogIntervalMs));
@@ -175,11 +175,7 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
         m_lastDetectionUpdateMs = nowMs;
         setAutonomousPendingInternal(false);
         setAutonomousModeInternal(true);
-        m_calibrationDone = false;
-        m_calibrationFrameCount = 0;
-        m_calibrationSum = 0.0;
-        m_referenceLaneWidth = 0.0;
-        m_pixelPerCm = 0.0;
+        m_pixelPerCm = 0.0;  // Yeni oturumda yeniden tahmin edilecek
     }
 
     // Sol ve sağ çizgi merkezlerini çıkar
@@ -212,298 +208,160 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // ✅ 2 ÇİZGİ TESPİTİ VE KALİBRASYON
+    // ✅ TEK ÇİZGİ TESPİTİ
     // ═══════════════════════════════════════════════════════════════
     const double frameWidth = std::max(1.0, primaryDetection.value(QStringLiteral("frameWidth")).toDouble());
     const double laneLeftX = primaryDetection.value(QStringLiteral("laneLeftX")).toDouble();
     const double laneRightX = primaryDetection.value(QStringLiteral("laneRightX")).toDouble();
-    double laneCenter = primaryDetection.value(QStringLiteral("laneCenterX")).toDouble();
-    const double headingError = primaryDetection.value(QStringLiteral("headingError")).toDouble();
 
-    // Tek çizgi durumunu kontrol et
     const bool leftDetected = (laneLeftX >= 0.0);
     const bool rightDetected = (laneRightX >= 0.0);
 
-    double laneWidthPixel = 0.0;
-    QString lineStatus;
+    // Hangi çizgiyi görüyorsak onu kullan (sol öncelikli)
+    double lineX = -1.0;          // Normalize [0,1] çizgi pozisyonu
+    bool lineIsLeft = false;      // Çizgi sol tarafta mı?
 
-    if (leftDetected && rightDetected) {
-        // ✅ 2 çizgi var - normal ortalama
-        laneWidthPixel = (laneRightX - laneLeftX) * frameWidth;
-        if (laneCenter <= 0.0 || laneCenter >= 1.0) {
-            laneCenter = (laneLeftX + laneRightX) * 0.5;
-        }
-        lineStatus = QStringLiteral("DUAL");
-    } else if (leftDetected && !rightDetected) {
-        // ✅ Sadece SOL çizgi var → çizgiden 10cm sağa git
-        const double laneLeftPx = laneLeftX * frameWidth;
-        double targetOffsetPx = (m_pixelPerCm > 1e-6)
-                                    ? (m_pixelPerCm * kSingleLineTargetCm)
-                                    : (frameWidth * 0.08); // fallback ~8% genişlik
-        const double virtualCenterPx = laneLeftPx + targetOffsetPx;
-        laneCenter = virtualCenterPx / frameWidth;
-        laneWidthPixel = 0.0; // Tek çizgi: kalibrasyona katkı yok
-        lineStatus = QStringLiteral("LEFT_ONLY");
-    } else if (!leftDetected && rightDetected) {
-        // ✅ Sadece SAĞ çizgi var → çizgiden 10cm sola git
-        const double laneRightPx = laneRightX * frameWidth;
-        double targetOffsetPx = (m_pixelPerCm > 1e-6)
-                                    ? (m_pixelPerCm * kSingleLineTargetCm)
-                                    : (frameWidth * 0.08); // fallback
-        const double virtualCenterPx = laneRightPx - targetOffsetPx;
-        laneCenter = virtualCenterPx / frameWidth;
-        laneWidthPixel = 0.0; // Tek çizgi: kalibrasyona katkı yok
-        lineStatus = QStringLiteral("RIGHT_ONLY");
-    } else {    
-        // ❌ Hiç çizgi yok
+    if (leftDetected) {
+        lineX = laneLeftX;
+        lineIsLeft = true;
+    } else if (rightDetected) {
+        lineX = laneRightX;
+        lineIsLeft = false;
+    } else {
         handleSearchMode(nowMs);
         return;
     }
 
-    // Lane center geçerlilik kontrolü
-    if (laneCenter <= 0.05 || laneCenter >= 0.95) {
+    // Geçerlilik kontrolü
+    if (lineX <= 0.02 || lineX >= 0.98) {
         handleSearchMode(nowMs);
         return;
     }
 
     m_lastLineSeenMs = nowMs;
+    m_lastSeenSide = lineIsLeft ? LineSide::Left : LineSide::Right;
 
     // ═══════════════════════════════════════════════════════════════
-    // ✅ KALİBRASYON (ilk 10 frame)
-    // ═══════════════════════════════════════════════════════════════
-    if (!m_calibrationDone) {
-        // Kalibrasyon SADECE iki gerçek çizgi varken yapılır
-        if (leftDetected && rightDetected) {
-            // Gerçekçi genişlik kontrolü: sanal/yanlış eşleşmeleri reddet
-            if (laneWidthPixel > 100.0) {
-                // İlk geçerli frame referans olsun
-                if (m_calibrationFrameCount == 0) {
-                    m_referenceLaneWidth = laneWidthPixel;
-                }
-
-                // %20 tolerans ile outlier reddet
-                const double minAllowed = m_referenceLaneWidth * 0.8;
-                const double maxAllowed = m_referenceLaneWidth * 1.2;
-
-                if (laneWidthPixel < minAllowed || laneWidthPixel > maxAllowed) {
-                    if (m_debugEnabled) {
-                        qDebug().noquote() << QStringLiteral("[KALIBRASYON] OUTLIER REDDEDILDI: %1 (ref: %2)").arg(laneWidthPixel, 0, 'f', 1).arg(m_referenceLaneWidth, 0, 'f', 1);
-                    }
-                } else {
-                    m_calibrationFrameCount++;
-                    m_calibrationSum += laneWidthPixel / kLaneWidthCm;
-
-                    if (m_debugEnabled) {
-                        qDebug().noquote() << QStringLiteral("[KALIBRASYON] %1/%2").arg(m_calibrationFrameCount).arg(kCalibrationFrames);
-                    }
-
-                    if (m_calibrationFrameCount >= kCalibrationFrames) {
-                        m_pixelPerCm = m_calibrationSum / kCalibrationFrames;
-                        m_calibrationDone = true;
-                        if (m_debugEnabled) {
-                            qDebug().noquote() << QStringLiteral("[KALIBRASYON] Tamamlandi: %1 pixel/cm").arg(m_pixelPerCm, 0, 'f', 2);
-                        }
-                    }
-                }
-
-                // Debug: kalibrasyon değerleri
-                if (m_debugEnabled) {
-                    qDebug() << "[DEBUG] laneWidthPx:" << laneWidthPixel
-                             << "pixelPerCm:" << m_pixelPerCm
-                             << "virtualWidthPx:" << (kLaneWidthCm * m_pixelPerCm)
-                             << "frame:" << m_calibrationFrameCount;
-                }
-            } else if (m_debugEnabled) {
-                qDebug().noquote() << QStringLiteral("[KALIBRASYON] COK DAR REDDEDILDI: %1 px").arg(laneWidthPixel, 0, 'f', 1);
-            }
-        } else if (m_debugEnabled) {
-            qDebug().noquote() << QStringLiteral("[KALIBRASYON] TEK CIZGI - BEKLIYOR");
-        }
-
-        // � Geçici: kalibrasyon bitmeden önce default 20 px/cm kullan
-        if (m_pixelPerCm <= 0.0) {
-            m_pixelPerCm = 20.0;
-        }
-
-        // �� Kalibrasyon bitmeden MOTOR DUR
-        if (m_autonomousMode) {
-            dispatchAutonomousCommand(QStringLiteral("DIFF,0,0"), false);
-            setGuidanceMode(QStringLiteral("CALIBRATING"));
-        } else {
-            setGuidanceMode(QStringLiteral("READY"));
-        }
-
-        // PID state sıfırla (kalibrasyon sırasında integrator dolmasın)
-        resetPidController();
-        m_pidLastMs = nowMs;
-
-        m_currentPidError = 0.0;
-        m_currentPidOutput = 0.0;
-        m_currentBaseSpeed = 0.0;
-        m_currentLeftSpeed = 0.0;
-        m_currentRightSpeed = 0.0;
-        m_currentLineCenterX = laneCenter;
-        m_currentTargetCenter = laneCenter;
-        m_currentDynamicCenter = 0.5;
-        m_currentHeadingError = headingError;
-        m_currentTotalError = 0.0;
-        m_currentTurnRatio = 0.0;
-        m_currentMode = "CALIBRATING";
-        emit pidDataChanged();
-        return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ✅ HATA HESAPLAMA (İKİ ÇİZGİ vs TEK ÇİZGİ)
+    // ✅ pixelPerCm TAHMİNİ (varsayılan: kamera ~1.4× yol genişliği görür)
+    // Bloklama YOK - ilk frame'den itibaren çalışır
     // ═══════════════════════════════════════════════════════════════
     if (m_pixelPerCm <= 1e-6) {
-        handleSearchMode(nowMs);
-        return;
+        // Varsayılan tahmin: kamera ~38cm genişlik görüyor (27cm yol + kenarlar)
+        constexpr double kCameraViewWidthCm = 31.0;
+        m_pixelPerCm = frameWidth / kCameraViewWidthCm;
+        if (m_debugEnabled) {
+            qDebug().noquote() << QStringLiteral("[KALIB] Varsayılan px/cm: %1 (frame=%2)")
+                .arg(m_pixelPerCm, 0, 'f', 2).arg(frameWidth, 0, 'f', 0);
+        }
     }
 
-    double errorCm = 0.0;
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ MESAFE ÖLÇÜMÜ (cm cinsinden)
+    // ═══════════════════════════════════════════════════════════════
+    const double robotCenterPx = 0.5 * frameWidth;
+    const double linePx = lineX * frameWidth;
+    double distanceCm;
 
-    if (lineStatus == QStringLiteral("LEFT_ONLY")) {
-        // 🎯 DUVAR TAKİP: sol çizgiden ~8cm sağda kal
-        const double laneLeftPx = laneLeftX * frameWidth;
-        const double robotCenterPx = 0.5 * frameWidth;
-        const double currentDistanceCm = (robotCenterPx - laneLeftPx) / m_pixelPerCm;
-        constexpr double targetDistanceCm = 8.0;
-        errorCm = clampErrorCm(targetDistanceCm - currentDistanceCm); // Pozitif = çok yakın, sola git
-        m_lastSeenSide = LineSide::Left;
-    } else if (lineStatus == QStringLiteral("RIGHT_ONLY")) {
-        // 🎯 DUVAR TAKİP: sağ çizgiden ~8cm solda kal
-        const double laneRightPx = laneRightX * frameWidth;
-        const double robotCenterPx = 0.5 * frameWidth;
-        const double currentDistanceCm = (laneRightPx - robotCenterPx) / m_pixelPerCm;
-        constexpr double targetDistanceCm = 8.0;
-        errorCm = -clampErrorCm(targetDistanceCm - currentDistanceCm); // Negatif = çok yakın, sağa git
-        m_lastSeenSide = LineSide::Right;
+    if (lineIsLeft) {
+        distanceCm = (robotCenterPx - linePx) / m_pixelPerCm;  // Sol çizgiden uzaklık
     } else {
-        // ✅ İKİ ÇİZGİ: Normal lane center hatası
-        const double errorPx = (0.5 - laneCenter) * frameWidth;
-        const double errorRawCm = errorPx / m_pixelPerCm;
-        errorCm = clampErrorCm(errorRawCm);
-        m_lastSeenSide = (errorCm > 0) ? LineSide::Left : LineSide::Right;
+        distanceCm = (linePx - robotCenterPx) / m_pixelPerCm;  // Sağ çizgiden uzaklık
+    }
+
+    // Mesafe negatifse çizgiyi geçmişiz demek → acil kaç
+    distanceCm = std::max(0.0, distanceCm);
+
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ ORANTILI DİREKSİYON (PID YOK - saf reactive)
+    // errorCm: hedeften sapma (pozitif = çok yakın, kaç)
+    // distanceCm < 5cm → tehlike, sert dönüş
+    // distanceCm ≈ 12.5cm → hata ≈ 0, düz git
+    // distanceCm > 12.5cm → hafif çizgiye doğru gel
+    // ═══════════════════════════════════════════════════════════════
+    double errorCm = kWallTargetCm - distanceCm;
+    // Pozitif error = çizgiye çok yakınız → kaç
+    // Negatif error = çizgiden çok uzağız → yaklaş
+
+    // Tehlike bölgesi: 5cm altında agresif boost
+    double steerMultiplier = 1.0;
+    if (distanceCm < kDangerZoneCm) {
+        // 5cm→1.0x, 0cm→3.0x (lineer boost)
+        steerMultiplier = 1.0 + 2.0 * (1.0 - distanceCm / kDangerZoneCm);
+    }
+
+    // Dönüş miktarı: mesafe hatası × gain × tehlike çarpanı
+    double turn = kSteerGain * errorCm * steerMultiplier;
+
+    // Sağ çizgi referanssa işareti ters çevir
+    if (!lineIsLeft) {
+        turn = -turn;
+    }
+
+    // tanh ile [-1, +1] arasına sınırla (yumuşak satürasyon)
+    turn = std::tanh(turn);
+
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ HIZ: Tehlike bölgesinde yavaşla
+    // ═══════════════════════════════════════════════════════════════
+    double baseSpeed = kBaseSpeed;
+    if (distanceCm < kDangerZoneCm) {
+        // 5cm→full speed, 0cm→%60 speed
+        double slowFactor = 0.6 + 0.4 * (distanceCm / kDangerZoneCm);
+        baseSpeed *= slowFactor;
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // ✅ TOPLAM HATA = Pozisyon + Heading
-    // Düzde heading minimal (salınım önle), virajda agresif (proaktif dönüş)
-    // Tek çizgide (virajda) heading kritik → full gain
-    // ═══════════════════════════════════════════════════════════════
-    const double clampedHeading = qBound(-0.30, headingError, 0.30);
-
-    double headingGain;
-    if (lineStatus == QStringLiteral("DUAL")) {
-        // Düzde |heading| < 0.03 ise neredeyse düz → heading etkisini baskıla
-        headingGain = (std::abs(clampedHeading) < 0.03) ? 1.0 : kKHeading;
-    } else {
-        // Tek çizgide viraj ortasındayız: heading yüksekse agresif, düşükse minimal
-        headingGain = (std::abs(clampedHeading) > 0.12) ? 2.5 : 1.0;
-    }
-
-    double totalError = errorCm + headingGain * clampedHeading;
-
-    m_lastLineSeenMs = nowMs;
-
-    // ═══════════════════════════════════════════════════════════════
-    // ✅ PID HESAPLAMA (main.py birebir)
-    // ═══════════════════════════════════════════════════════════════
-    double dt = (nowMs - m_pidLastMs) / 1000.0;
-    if (dt <= 0) dt = 0.001;
-    if (dt > 0.2) dt = 0.2;
-    m_pidLastMs = nowMs;
-
-    double derivative = (totalError - m_pidLastError) / dt;
-    m_pidIntegral += totalError * dt;
-    m_pidIntegral = qBound(-kPidIntegralMax, m_pidIntegral, kPidIntegralMax);
-
-    double pidOut = kPidKp * totalError + kPidKd * derivative + kPidKi * m_pidIntegral;
-    
-    // Yumuşatma (tanh)
-    double turn = std::tanh(pidOut);
-    m_pidLastError = totalError;
-
-    // ═══════════════════════════════════════════════════════════════
-    // ✅ ARC MOTOR HESABI (Tank dönüş YOK)
-    // ═══════════════════════════════════════════════════════════════
-    // turn pozitif = sağa dön (sağ motor hızlı, sol yavaş) - TERSİ
-    double leftRatio = 1.0 - turn;
-    double rightRatio = 1.0 + turn;
-
-    // ═══════════════════════════════════════════════════════════════
-    // ✅ ADAPTIVE SPEED: 2 çizgide %30 yavaş, tek çizgide tam hız
-    // ═══════════════════════════════════════════════════════════════
-    const double baseSpeed = (lineStatus == QStringLiteral("DUAL"))
-                             ? kBaseSpeed * 0.7
-                             : kBaseSpeed;
-
-    // ═══════════════════════════════════════════════════════════════
-    // ✅ PWM HESAPLAMA (gerçek diferansiyel, normalize YOK)
-    // Dış teker hızlanır, iç teker yavaşlar → agresif dönüş
+    // ✅ PWM HESAPLAMA (Motor yönü ters çevrildi)
+    // turn pozitif → sola dön (sol yavaş, sağ hızlı)
     // ═══════════════════════════════════════════════════════════════
     double leftPwm  = baseSpeed * (1.0 - turn);
     double rightPwm = baseSpeed * (1.0 + turn);
 
-    // Sadece fiziksel limitlere clip et
     leftPwm  = qBound(kMinPwm, leftPwm,  kMaxPwm);
     rightPwm = qBound(kMinPwm, rightPwm, kMaxPwm);
 
     // ═══════════════════════════════════════════════════════════════
-    // ✅ KOMUT GÖNDER (sadece otonom modda)
+    // ✅ KOMUT GÖNDER
     // ═══════════════════════════════════════════════════════════════
     if (m_autonomousMode) {
         QString cmd = QStringLiteral("DIFF,%1,%2").arg(leftPwm, 0, 'f', 1).arg(rightPwm, 0, 'f', 1);
         dispatchAutonomousCommand(cmd, true);
     }
 
-    // Debug (her zaman göster, motor durumunu da belirt)
+    // Debug
     if (m_debugEnabled) {
-        QString motorStatus = m_autonomousMode ? "AUTO" : "MANUAL";
         qDebug().noquote() << QStringLiteral(
-            "[ARC-%10] %1 | L:%2 R:%3 | Spd:%4 | Left:%5 Right:%6 | ErrCM:%7 | Head:%8 | Turn:%9 | PID:%11")
-            .arg(lineStatus)
+            "[LINE-%1] Dist:%2cm | Err:%3 | Turn:%4 | L:%5 R:%6 | Spd:%7 | %8")
+            .arg(lineIsLeft ? "L" : "R")
+            .arg(distanceCm, 0, 'f', 1)
+            .arg(errorCm, 0, 'f', 1)
+            .arg(turn, 0, 'f', 3)
             .arg(leftPwm, 0, 'f', 1)
             .arg(rightPwm, 0, 'f', 1)
             .arg(baseSpeed, 0, 'f', 1)
-            .arg(laneLeftX, 0, 'f', 3)
-            .arg(laneRightX, 0, 'f', 3)
-            .arg(errorCm, 0, 'f', 2)
-            .arg(headingError, 0, 'f', 3)
-            .arg(turn, 0, 'f', 3)
-            .arg(pidOut, 0, 'f', 3)
-            .arg(motorStatus);
+            .arg(distanceCm < kDangerZoneCm ? "DANGER!" : "ok");
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // ✅ GÖRSELLEŞTİRME VERİLERİNİ GÜNCELLE (her zaman)
+    // ✅ GÖRSELLEŞTİRME
     // ═══════════════════════════════════════════════════════════════
     m_currentPidError = errorCm;
-    m_currentPidOutput = pidOut;
+    m_currentPidOutput = turn;
     m_currentBaseSpeed = baseSpeed;
-    m_currentLeftSpeed = leftPwm;  // Hesaplanan değer (motor çalışmasa da göster)
+    m_currentLeftSpeed = leftPwm;
     m_currentRightSpeed = rightPwm;
-    m_currentLineCenterX = laneCenter;
-    m_currentTargetCenter = laneCenter;
-    m_currentDynamicCenter = 0.5;
-    m_currentHeadingError = headingError;
-    m_currentTotalError = totalError;
+    m_currentLineCenterX = lineX;
+    m_currentTargetCenter = 0.5;
+    m_currentWallDistance = distanceCm;
+    m_currentHeadingError = 0.0;
+    m_currentTotalError = errorCm;
     m_currentTurnRatio = turn;
-    // Mode: tek çizgi durumunu da göster (otonom değilse READY ekle)
-    QString baseMode;
-    if (lineStatus == QStringLiteral("LEFT_ONLY")) {
-        baseMode = "LEFT";
-    } else if (lineStatus == QStringLiteral("RIGHT_ONLY")) {
-        baseMode = "RIGHT";
-    } else {
-        baseMode = "DUAL";
-    }
+
     if (m_autonomousMode) {
-        m_currentMode = "ARC-" + baseMode;
-        setGuidanceMode(QStringLiteral("ARC-") + baseMode);
+        m_currentMode = distanceCm < kDangerZoneCm ? "DANGER" : "TRACK";
+        setGuidanceMode(QStringLiteral("LINE-") + (lineIsLeft ? "L" : "R"));
     } else {
-        m_currentMode = "READY-" + baseMode;  // Manuel modda hazır
+        m_currentMode = "READY";
         setGuidanceMode(QStringLiteral("READY"));
     }
     emit pidDataChanged();
@@ -609,10 +467,6 @@ void RaspiControlClient::resetAutonomousController()
     m_pidIntegral = 0.0;
     m_pidLastMs = nowMs;
     m_pidPrevError = 0.0;
-    m_calibrationDone = false;
-    m_calibrationFrameCount = 0;
-    m_calibrationSum = 0.0;
-    m_referenceLaneWidth = 0.0;
     m_pixelPerCm = 0.0;
 }
 
@@ -655,57 +509,6 @@ void RaspiControlClient::extractLaneCentersFromMask(
 
     std::sort(leftCenters.begin(), leftCenters.end());
     std::sort(rightCenters.begin(), rightCenters.end());
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ✅ HEADING ERROR HESAPLAMA (çizgi eğimi)
-// ═══════════════════════════════════════════════════════════════
-double RaspiControlClient::computeHeadingError(
-    const QVariantList &masks,
-    int imageWidth,
-    int imageHeight)
-{
-    // ROI bölgesindeki noktaları topla
-    QVector<double> xs, ys;
-
-    for (const QVariant &item : masks) {
-        const QVariantMap mask = item.toMap();
-        if (mask.isEmpty()) continue;
-
-        double x = mask.value(QStringLiteral("x")).toDouble();
-        double y = mask.value(QStringLiteral("y")).toDouble();
-        double w = mask.value(QStringLiteral("w")).toDouble();
-        double h = mask.value(QStringLiteral("h")).toDouble();
-        double score = mask.value(QStringLiteral("score")).toDouble();
-
-        if (score < kDetectionScoreThreshold) continue;
-
-        // ROI kontrol (alt %50)
-        double pixelY = y * imageHeight;
-        if (pixelY < imageHeight * kRoiTopRatio) continue;
-
-        xs.append((x + w * 0.5) * imageWidth);
-        ys.append((y + h * 0.5) * imageHeight);
-    }
-
-    if (xs.size() < 10) return 0.0;
-
-    // Linear fit (en az kareler)
-    double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-    int n = xs.size();
-
-    for (int i = 0; i < n; ++i) {
-        sumX += xs[i];
-        sumY += ys[i];
-        sumXY += xs[i] * ys[i];
-        sumX2 += xs[i] * xs[i];
-    }
-
-    double denom = n * sumX2 - sumX * sumX;
-    if (qAbs(denom) < 1e-10) return 0.0;
-
-    double slope = (n * sumXY - sumX * sumY) / denom;
-    return -std::atan(slope);  // Radyan cinsinden heading error
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -848,15 +651,11 @@ QVector<double> RaspiControlClient::extractLineCenters(const QVariantList &boxes
 
 bool RaspiControlClient::dispatchAutonomousCommand(const QString &command, bool throttle)
 {
-    const qint64 nowMs = m_commandTimer.elapsed();
-    if (command == m_lastAutonomousCommand && (nowMs - m_lastAutonomousCommandMs) < 100) {
-        return true;
-    }
-
     if (!sendRawCommand(command, throttle)) {
         return false;
     }
 
+    const qint64 nowMs = m_commandTimer.elapsed();
     m_lastAutonomousCommand = command;
     m_lastAutonomousCommandMs = nowMs;
     return true;
@@ -876,28 +675,55 @@ QString RaspiControlClient::currentAutonomyStatus() const
     return QStringLiteral("MANUAL");
 }
 
+void RaspiControlClient::onCommandBufferTimeout()
+{
+    if (!m_commandBuffer.isEmpty()) {
+        sendRawCommandImpl(m_commandBuffer);
+        m_commandBuffer.clear();
+    }
+}
+
+bool RaspiControlClient::sendRawCommandImpl(const QString &command)
+{
+    if (!connected()) {
+        return false;
+    }
+    const QByteArray data = (command + "\n").toUtf8();
+    return m_socket.write(data) == data.size();
+}
+
 bool RaspiControlClient::sendRawCommand(const QString &command, bool throttle)
 {
     if (!connected()) {
         return false;
     }
 
+    const qint64 nowMs = m_commandTimer.elapsed();
+
+    // 1️⃣ Buffer: rate-limit dolmadıysa son komutu biriktir
     if (throttle) {
-        const qint64 nowMs = m_commandTimer.elapsed();
-        if (nowMs - m_lastCommandMs < kMinCommandIntervalMs) {
+        const qint64 elapsedSinceLast = nowMs - m_lastSentCommandMs;
+        if (elapsedSinceLast < kMinCommandIntervalMs) {
+            m_commandBuffer = command;
+            if (!m_commandBufferTimer.isActive()) {
+                m_commandBufferTimer.start(int(kMinCommandIntervalMs - elapsedSinceLast));
+            }
             return true;
         }
-        m_lastCommandMs = nowMs;
     }
 
-    const QByteArray payload = command.toUtf8() + '\n';
-    if (m_socket.write(payload) == -1) {
-        setLastError(m_socket.errorString());
-        emit connectedChanged();
-        emit autonomyStatusChanged();
+    // 2️⃣ Deduplication: aynı komutsa gönderme
+    if (command == m_lastSentCommand && (nowMs - m_lastSentCommandMs) < 100) {
+        if (m_debugEnabled)
+            qDebug() << "[DEDUP] Komut atlandı:" << command;
+        return true;
+    }
+
+    if (!sendRawCommandImpl(command))
         return false;
-    }
 
-    m_socket.flush();
+    m_lastSentCommand = command;
+    m_lastSentCommandMs = nowMs;
     return true;
 }
+
