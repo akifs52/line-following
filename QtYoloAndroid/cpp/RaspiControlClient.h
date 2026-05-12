@@ -173,8 +173,8 @@ private:
     static constexpr double kLaneWidthCm = 27.0;
     static constexpr double kWallTargetCm = 13.5;  // Hedef mesafe (yol/2)
     static constexpr double kDangerZoneCm = 5.0;   // Bu mesafenin altında sert dönüş
-    static constexpr double kBaseSpeed = 35.0;
-    static constexpr double kMinPwm = 30.0;
+    static constexpr double kBaseSpeed = 33;
+    static constexpr double kMinPwm = 21.0;
     static constexpr double kMaxPwm = 100.0;
     static constexpr double kSteerGain = 0.12;     // Mesafe→dönüş oranı (cm başına)
 

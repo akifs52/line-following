@@ -247,7 +247,7 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
     // ═══════════════════════════════════════════════════════════════
     if (m_pixelPerCm <= 1e-6) {
         // Varsayılan tahmin: kamera ~38cm genişlik görüyor (27cm yol + kenarlar)
-        constexpr double kCameraViewWidthCm = 31.0;
+        constexpr double kCameraViewWidthCm = 20.0;
         m_pixelPerCm = frameWidth / kCameraViewWidthCm;
         if (m_debugEnabled) {
             qDebug().noquote() << QStringLiteral("[KALIB] Varsayılan px/cm: %1 (frame=%2)")
@@ -305,9 +305,21 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
     // ═══════════════════════════════════════════════════════════════
     double baseSpeed = kBaseSpeed;
     if (distanceCm < kDangerZoneCm) {
-        // 5cm→full speed, 0cm→%60 speed
-        double slowFactor = 0.6 + 0.4 * (distanceCm / kDangerZoneCm);
+        // 5cm→full speed, 0cm→%75 speed (eskiden %60'tı)
+        double slowFactor = 0.75 + 0.25 * (distanceCm / kDangerZoneCm);
         baseSpeed *= slowFactor;
+    }
+
+    // 5. Dönüş hızını korumak için turn-based speed boost
+    // turn değeri 0.5'ten büyükse hafif hız arttır
+    double turnMagnitude = std::abs(turn);
+    if (turnMagnitude > 0.3) {
+        baseSpeed *= (1.0 + turnMagnitude * 0.15);  // %15'e kadar boost
+    }
+
+    // 6. Düz gidişlerde ekstra hız (turn < 0.15 ise)
+    if (turnMagnitude < 0.15) {
+        baseSpeed *= 1.1;  // %10 ekstra hız
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -522,7 +534,7 @@ void RaspiControlClient::handleSearchMode(qint64 nowMs)
 
     if (elapsedMs < kNoLineTimeoutMs) {
         // Kısa süre: düz git
-        double slowSpeed = kBaseSpeed * 0.5;
+        double slowSpeed = kBaseSpeed * 0.7;  // 0.5 → 0.7 (daha hızlı düz git)
         cmd = QStringLiteral("DIFF,%1,%2").arg(slowSpeed, 0, 'f', 1).arg(slowSpeed, 0, 'f', 1);
         mode = QStringLiteral("SEARCH-FWD");
     } else if (elapsedMs < kNoLineTimeoutMs * 3) {

@@ -94,7 +94,7 @@ private:
 #endif
 
     bool m_enabled = true;
-    float m_scoreThreshold = 0.20f; // Minimum 30% confidence for detections
+    float m_scoreThreshold = 0.30f; // Minimum 30% confidence for detections
     double m_fps = 0.0;
     bool m_modelLoaded = false;
     QString m_modelStatus = QStringLiteral("Model assets: checking");
