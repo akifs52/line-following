@@ -1,0 +1,202 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/road/protos/Road.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/road/protos/RoadLine.proto"
+
+WorldInfo {
+  basicTimeStep 16
+  contactProperties [
+    ContactProperties {
+      material1 "caster"
+      coulombFriction [
+        0
+      ]
+    }
+    ContactProperties {
+      material1 "tire"
+      coulombFriction [
+        50
+      ]
+    }
+  ]
+}
+Viewpoint {
+  orientation -0.04674740152818635 0.9876537708444341 0.14951491359437313 0.5261998372818747
+  position -11.775411101555793 0.24310552361644774 9.532297348366312
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+Road {
+  width 6
+  numberOfLanes 3
+  lines [
+    RoadLine {
+      color 1 1 0
+      type "continuous"
+      width 0.3
+    }
+    RoadLine {
+      type "continuous"
+      width 0.3
+    }
+  ]
+  wayPoints [
+    -5 0 0
+    15 0 0
+    20 0 0
+    20 15 0
+    15 15 0
+    0 15 0
+    -5 15 0
+    -5 30 0
+    0 30 0
+    20 30 0
+    30 30 0
+  ]
+  appearance PBRAppearance {
+    baseColor 0.12 0.12 0.12
+    roughness 0.85
+  }
+  roadBoundingObject TRUE
+}
+Robot {
+  translation 1 0 0.195
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.1 0.35 0.85
+        roughness 0.3
+      }
+      geometry Box {
+        size 0.6 0.45 0.12
+      }
+    }
+    Camera {
+      translation 0.3 0 0.18
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.2 0.2 0.2
+            roughness 0.5
+          }
+          geometry Box {
+            size 0.03 0.09 0.06
+          }
+        }
+      ]
+      width 320
+      height 240
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 1 0
+        anchor -0.18 0.27 -0.075
+      }
+      device [
+        RotationalMotor {
+          name "left_motor"
+          maxVelocity 100
+        }
+      ]
+      endPoint Solid {
+        translation -0.18 0.27 -0.075
+        rotation 1 -5.495313512695661e-16 -7.850447875279516e-17 1.5707999999999998
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.1 0.1 0.1
+              roughness 0.9
+            }
+            geometry Cylinder {
+              height 0.06
+              radius 0.12
+            }
+          }
+        ]
+        name "left_wheel"
+        contactMaterial "tire"
+        boundingObject Cylinder {
+          height 0.06
+          radius 0.12
+        }
+        physics Physics {
+          mass 1
+        }
+      }
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 1 0
+        anchor -0.18 -0.27 -0.075
+      }
+      device [
+        RotationalMotor {
+          name "right_motor"
+          maxVelocity 100
+        }
+      ]
+      endPoint Solid {
+        translation -0.18 -0.27 -0.075
+        rotation 1 -2.404199661804353e-16 -3.1156465005015595e-16 1.570799999999999
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.1 0.1 0.1
+              roughness 0.9
+            }
+            geometry Cylinder {
+              height 0.06
+              radius 0.12
+            }
+          }
+        ]
+        name "right_wheel"
+        contactMaterial "tire"
+        boundingObject Cylinder {
+          height 0.06
+          radius 0.12
+        }
+        physics Physics {
+          mass 1
+        }
+      }
+    }
+    Solid {
+      translation 0.225 0 -0.075
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.8 0.8 0.8
+            roughness 0.1
+          }
+          geometry Sphere {
+            radius 0.12
+          }
+        }
+      ]
+      name "caster"
+      contactMaterial "caster"
+      boundingObject Sphere {
+        radius 0.12
+      }
+      physics Physics {
+        mass 0.5
+      }
+    }
+  ]
+  boundingObject Box {
+    size 0.6 0.45 0.12
+  }
+  physics Physics {
+    density -1
+    mass 5
+    centerOfMass [
+      0.1 0 -0.08
+    ]
+  }
+  controller "my_controller"
+}

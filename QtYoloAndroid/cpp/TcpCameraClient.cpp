@@ -2,6 +2,22 @@
 #include "VideoItem.h"
 
 #include <QDebug>
+#include <QStringList>
+
+namespace {
+constexpr int kRawHeaderSize = 20;
+constexpr int kTelemetryHeaderSize = 8;
+constexpr int kRawFormatBgra = 1;
+constexpr quint32 kMaxTelemetryPayloadSize = 16u * 1024u;
+
+quint32 readLe32(const char *data)
+{
+    return quint32(quint8(data[0]))
+        | (quint32(quint8(data[1])) << 8)
+        | (quint32(quint8(data[2])) << 16)
+        | (quint32(quint8(data[3])) << 24);
+}
+} // namespace
 
 TcpCameraClient::TcpCameraClient(QObject *parent)
     : QObject(parent)
@@ -48,6 +64,66 @@ QString TcpCameraClient::lastError() const
     return m_lastError;
 }
 
+bool TcpCameraClient::simulationTelemetryValid() const
+{
+    return m_simulationTelemetryValid;
+}
+
+QString TcpCameraClient::simulationGuidanceMode() const
+{
+    return m_simulationGuidanceMode;
+}
+
+QString TcpCameraClient::simulationSource() const
+{
+    return m_simulationSource;
+}
+
+double TcpCameraClient::simulationWallDistance() const
+{
+    return m_simulationWallDistance;
+}
+
+double TcpCameraClient::simulationError() const
+{
+    return m_simulationError;
+}
+
+double TcpCameraClient::simulationTurnRatio() const
+{
+    return m_simulationTurnRatio;
+}
+
+double TcpCameraClient::simulationBaseSpeed() const
+{
+    return m_simulationBaseSpeed;
+}
+
+double TcpCameraClient::simulationLeftMotorSpeed() const
+{
+    return m_simulationLeftMotorSpeed;
+}
+
+double TcpCameraClient::simulationRightMotorSpeed() const
+{
+    return m_simulationRightMotorSpeed;
+}
+
+double TcpCameraClient::simulationLineCenterX() const
+{
+    return m_simulationLineCenterX;
+}
+
+double TcpCameraClient::simulationScore() const
+{
+    return m_simulationScore;
+}
+
+int TcpCameraClient::simulationClusters() const
+{
+    return m_simulationClusters;
+}
+
 void TcpCameraClient::connectToHost(const QString &host, int port)
 {
     if (host.isEmpty() || port <= 0 || port > 65535) {
@@ -60,6 +136,7 @@ void TcpCameraClient::connectToHost(const QString &host, int port)
     m_port = port;
     m_buffer.clear();
     m_lastError.clear();
+    resetSimulationTelemetry();
 
     if (m_socket.state() != QAbstractSocket::UnconnectedState) {
         m_socket.abort();
@@ -89,6 +166,7 @@ void TcpCameraClient::disconnectFromHost()
     }
     m_buffer.clear();
     m_ringBuffer.clear();
+    resetSimulationTelemetry();
 }
 
 void TcpCameraClient::onReadyRead()
@@ -144,44 +222,194 @@ void TcpCameraClient::onReconnectTimeout()
 
 void TcpCameraClient::extractJpegFrames()
 {
-    // JPEG markers: SOI = 0xFFD8, EOI = 0xFFD9
+    // Supports both:
+    // - JPEG byte stream: SOI 0xFFD8 ... EOI 0xFFD9
+    // - Webots raw stream: "WBFR" + le32(width,height,format,payloadSize) + BGRA bytes
+    // - Webots telemetry: "WBTM" + le32(payloadSize) + UTF-8 key/value payload
     while (true) {
-        // Find SOI (Start of Image)
-        int soi = m_buffer.indexOf("\xFF\xD8");
-        if (soi == -1) {
-            // No SOI found, keep last byte in case it's 0xFF
-            if (!m_buffer.isEmpty() && m_buffer.at(m_buffer.size() - 1) == '\xFF') {
-                m_buffer = m_buffer.right(1);
-            } else {
-                m_buffer.clear();
+        const int rawStart = m_buffer.indexOf("WBFR");
+        const int telemetryStart = m_buffer.indexOf("WBTM");
+        const int soi = m_buffer.indexOf("\xFF\xD8");
+
+        enum class PacketType { None, RawFrame, Telemetry, Jpeg };
+        PacketType packetType = PacketType::None;
+        int packetStart = -1;
+        const auto considerPacket = [&](int start, PacketType type) {
+            if (start >= 0 && (packetStart < 0 || start < packetStart)) {
+                packetStart = start;
+                packetType = type;
+            }
+        };
+
+        considerPacket(rawStart, PacketType::RawFrame);
+        considerPacket(telemetryStart, PacketType::Telemetry);
+        considerPacket(soi, PacketType::Jpeg);
+
+        if (packetStart == -1) {
+            if (m_buffer.size() > 3) {
+                m_buffer = m_buffer.right(3);
             }
             return;
         }
 
-        // Find EOI (End of Image)
-        int eoi = m_buffer.indexOf("\xFF\xD9", soi + 2);
+        if (packetStart > 0) {
+            m_buffer.remove(0, packetStart);
+        }
+
+        if (packetType == PacketType::Telemetry) {
+            if (m_buffer.size() < kTelemetryHeaderSize) {
+                return;
+            }
+
+            const quint32 payloadSize = readLe32(m_buffer.constData() + 4);
+            if (payloadSize > kMaxTelemetryPayloadSize) {
+                m_buffer.remove(0, 1);
+                continue;
+            }
+
+            if (m_buffer.size() < kTelemetryHeaderSize + int(payloadSize)) {
+                return;
+            }
+
+            parseTelemetryPayload(m_buffer.mid(kTelemetryHeaderSize, int(payloadSize)));
+            m_buffer.remove(0, kTelemetryHeaderSize + int(payloadSize));
+            continue;
+        }
+
+        if (packetType == PacketType::RawFrame) {
+            if (m_buffer.size() < kRawHeaderSize) {
+                return;
+            }
+
+            const char *header = m_buffer.constData();
+            const quint32 frameWidth = readLe32(header + 4);
+            const quint32 frameHeight = readLe32(header + 8);
+            const quint32 format = readLe32(header + 12);
+            const quint32 payloadSize = readLe32(header + 16);
+            const quint64 expectedPayload = quint64(frameWidth) * quint64(frameHeight) * 4u;
+
+            const bool validHeader = frameWidth > 0
+                && frameHeight > 0
+                && frameWidth <= 4096
+                && frameHeight <= 4096
+                && format == kRawFormatBgra
+                && payloadSize == expectedPayload
+                && payloadSize <= 64u * 1024u * 1024u;
+
+            if (!validHeader) {
+                m_buffer.remove(0, 1);
+                continue;
+            }
+
+            if (m_buffer.size() < kRawHeaderSize + int(payloadSize)) {
+                return;
+            }
+
+            const uchar *pixels = reinterpret_cast<const uchar *>(m_buffer.constData() + kRawHeaderSize);
+            QImage rawFrame(pixels, int(frameWidth), int(frameHeight), QImage::Format_ARGB32);
+            if (!rawFrame.isNull()) {
+                onFrameReady(rawFrame.copy());
+            }
+
+            m_buffer.remove(0, kRawHeaderSize + int(payloadSize));
+            continue;
+        }
+
+        const int eoi = m_buffer.indexOf("\xFF\xD9", 2);
         if (eoi == -1) {
-            // EOI not found yet, need more data
-            if (soi > 0) {
-                m_buffer.remove(0, soi);
-            }
             return;
         }
 
-        // Extract JPEG data and push to ring buffer (drops old frames automatically)
-        QByteArray jpegData = m_buffer.mid(soi, eoi - soi + 2);
+        QByteArray jpegData = m_buffer.mid(0, eoi + 2);
         m_ringBuffer.push(jpegData);
 
-        // Remove processed data from buffer
         m_buffer.remove(0, eoi + 2);
 
-        // Limit buffer size to prevent memory issues
         if (m_buffer.size() > 10 * 1024 * 1024) { // 10 MB limit
             qDebug() << "[TcpCameraClient] Buffer too large, clearing";
             m_buffer.clear();
             return;
         }
     }
+}
+
+void TcpCameraClient::parseTelemetryPayload(const QByteArray &payload)
+{
+    const QStringList fields = QString::fromUtf8(payload).split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    for (const QString &field : fields) {
+        const int separator = field.indexOf(QLatin1Char('='));
+        if (separator <= 0)
+            continue;
+
+        const QString key = field.left(separator);
+        const QString value = field.mid(separator + 1);
+        bool ok = false;
+
+        if (key == QLatin1String("mode")) {
+            m_simulationGuidanceMode = value;
+        } else if (key == QLatin1String("source")) {
+            m_simulationSource = value;
+        } else if (key == QLatin1String("distance")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationWallDistance = parsed;
+        } else if (key == QLatin1String("error")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationError = parsed;
+        } else if (key == QLatin1String("turn")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationTurnRatio = parsed;
+        } else if (key == QLatin1String("base")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationBaseSpeed = parsed;
+        } else if (key == QLatin1String("left")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationLeftMotorSpeed = parsed;
+        } else if (key == QLatin1String("right")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationRightMotorSpeed = parsed;
+        } else if (key == QLatin1String("lineX")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationLineCenterX = parsed;
+        } else if (key == QLatin1String("score")) {
+            const double parsed = value.toDouble(&ok);
+            if (ok)
+                m_simulationScore = parsed;
+        } else if (key == QLatin1String("clusters")) {
+            const int parsed = value.toInt(&ok);
+            if (ok)
+                m_simulationClusters = parsed;
+        }
+    }
+
+    m_simulationTelemetryValid = true;
+    emit simulationTelemetryChanged();
+}
+
+void TcpCameraClient::resetSimulationTelemetry()
+{
+    if (!m_simulationTelemetryValid)
+        return;
+
+    m_simulationTelemetryValid = false;
+    m_simulationGuidanceMode = QStringLiteral("STOP");
+    m_simulationSource = QStringLiteral("none");
+    m_simulationWallDistance = 0.0;
+    m_simulationError = 0.0;
+    m_simulationTurnRatio = 0.0;
+    m_simulationBaseSpeed = 0.0;
+    m_simulationLeftMotorSpeed = 0.0;
+    m_simulationRightMotorSpeed = 0.0;
+    m_simulationLineCenterX = -1.0;
+    m_simulationScore = 0.0;
+    m_simulationClusters = 0;
+    emit simulationTelemetryChanged();
 }
 
 void TcpCameraClient::updateFrameSource()

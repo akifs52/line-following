@@ -168,7 +168,23 @@ void populateMaskGeometry(
         det.polygon += rightBoundary;
     }
 
-    if (fitCount > 0) {
+    // ═══════════════════════════════════════════════════════════════
+    // lineCenterX: Polygonun orta çizgiye (x=0.5) EN YAKIN noktasını
+    // baz al. Böylece çizgi eğik olsa bile gerçek mesafe doğru ölçülür.
+    // ═══════════════════════════════════════════════════════════════
+    if (!det.polygon.isEmpty()) {
+        double closestX = det.polygon[0].x();
+        double closestDist = std::abs(closestX - 0.5);
+        for (int pi = 1; pi < det.polygon.size(); ++pi) {
+            const double px = det.polygon[pi].x();
+            const double pd = std::abs(px - 0.5);
+            if (pd < closestDist) {
+                closestDist = pd;
+                closestX = px;
+            }
+        }
+        det.lineCenterX = float(closestX);
+    } else if (fitCount > 0) {
         det.lineCenterX = float((sumX / double(fitCount)) / double(srcW));
     } else if (srcW > 0) {
         det.lineCenterX = float(det.rect.center().x() / double(srcW));

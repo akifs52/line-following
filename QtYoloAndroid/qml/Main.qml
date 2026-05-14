@@ -58,6 +58,7 @@ ApplicationWindow {
     property var detectionBoxes: []
     property string uiErrorText: ""
     property bool pendingConnect: false
+    property bool simulationMode: false
     readonly property bool autonomousBusy: controlClient.autonomousMode || controlClient.autonomousPending
 
     // Gamepad connections
@@ -99,7 +100,8 @@ ApplicationWindow {
 
     }
 
-    function connectRaspberry() {
+    function connectRaspberry(simulation) {
+        root.simulationMode = simulation === true
         const host = raspiIpField.text.trim()
         const controlPort = parsePort(hostPortField.text, 5005)
         if (host.length === 0) {
@@ -118,8 +120,16 @@ ApplicationWindow {
         tcpCameraClient.connectToHost(host, camPort)
     }
 
+    function connectSimulation() {
+        raspiIpField.text = "127.0.0.1"
+        hostPortField.text = "5005"
+        camPortField.text = "8554"
+        connectRaspberry(true)
+    }
+
     function disconnectRaspberry() {
         pendingConnect = false
+        simulationMode = false
         connectionDialog.close()
         controlClient.setAutonomousEnabled(false)
         controlClient.disconnectFromHost()
@@ -148,6 +158,36 @@ ApplicationWindow {
         if (pendingConnect)
             return "#facc15"
         return "#94a3b8"
+    }
+
+    function simulationTelemetryReady() {
+        return simulationMode && tcpCameraClient.simulationTelemetryValid
+    }
+
+    function displayGuidanceMode() {
+        if (simulationMode)
+            return tcpCameraClient.simulationTelemetryValid ? tcpCameraClient.simulationGuidanceMode : "WAIT"
+        return controlClient.guidanceMode
+    }
+
+    function displayWallDistance() {
+        return simulationMode ? tcpCameraClient.simulationWallDistance : controlClient.wallDistance
+    }
+
+    function displayTurnRatio() {
+        return simulationMode ? tcpCameraClient.simulationTurnRatio : controlClient.turnRatio
+    }
+
+    function displayLeftMotorSpeed() {
+        return simulationMode ? tcpCameraClient.simulationRightMotorSpeed : controlClient.leftMotorSpeed
+    }
+
+    function displayRightMotorSpeed() {
+        return simulationMode ? tcpCameraClient.simulationLeftMotorSpeed : controlClient.rightMotorSpeed
+    }
+
+    function displayBaseSpeed() {
+        return simulationMode ? tcpCameraClient.simulationBaseSpeed : controlClient.baseSpeed
     }
 
     function popupStatusText(status) {
@@ -351,6 +391,10 @@ ApplicationWindow {
                 uiErrorText = ""
             root.refreshPendingConnect()
         }
+
+        function onSimulationTelemetryChanged() {
+            overlay.requestPaint()
+        }
     }
 
     Flickable {
@@ -520,27 +564,38 @@ ApplicationWindow {
                         ctx.setLineDash([])
 
                         // Tek çizgi takip görseli
-                        if (primary && primary.hasLaneMetrics) {
+                        const appHasLaneMetrics = !root.simulationMode && primary && primary.hasLaneMetrics
+                        const simHasTelemetry = root.simulationTelemetryReady()
+                        if (appHasLaneMetrics || simHasTelemetry) {
                             const centerX = rect.x + rect.width * 0.5
                             const roiMarkerY = roiTopY + 20
 
                             // Hangi çizgi tespit edildi?
-                            const hasLeft = primary.laneLeftX >= 0
-                            const hasRight = primary.laneRightX >= 0
-                            const lineX = hasLeft
-                                          ? (rect.x + primary.laneLeftX * rect.width)
-                                          : (rect.x + primary.laneRightX * rect.width)
-                            const lineLabel = hasLeft ? "L" : "R"
-                            const lineColor = hasLeft ? "#3b82f6" : "#22c55e"
+                            let lineCenter = -1
+                            if (simHasTelemetry) {
+                                lineCenter = tcpCameraClient.simulationLineCenterX
+                            } else if (primary.laneLeftX >= 0) {
+                                lineCenter = primary.laneLeftX
+                            } else if (primary.laneRightX >= 0) {
+                                lineCenter = primary.laneRightX
+                            }
+
+                            const hasLine = lineCenter >= 0 && lineCenter <= 1
+                            const hasLeft = hasLine && lineCenter < 0.5
+                            const lineX = hasLine ? (rect.x + lineCenter * rect.width) : centerX
+                            const lineLabel = hasLine ? (hasLeft ? "L" : "R") : "?"
+                            const lineColor = hasLine ? (hasLeft ? "#3b82f6" : "#22c55e") : "#f87171"
 
                             // Çizgi noktası
-                            ctx.beginPath()
-                            ctx.arc(lineX, roiMarkerY, 9, 0, Math.PI * 2)
-                            ctx.fillStyle = lineColor
-                            ctx.fill()
-                            ctx.font = "bold 8px sans-serif"
-                            ctx.fillStyle = "#fff"
-                            ctx.fillText(lineLabel, lineX - 3, roiMarkerY + 3)
+                            if (hasLine) {
+                                ctx.beginPath()
+                                ctx.arc(lineX, roiMarkerY, 9, 0, Math.PI * 2)
+                                ctx.fillStyle = lineColor
+                                ctx.fill()
+                                ctx.font = "bold 8px sans-serif"
+                                ctx.fillStyle = "#fff"
+                                ctx.fillText(lineLabel, lineX - 3, roiMarkerY + 3)
+                            }
 
                             // Merkez çizgisi (kesikli)
                             ctx.beginPath()
@@ -554,23 +609,27 @@ ApplicationWindow {
 
                             // Mesafe çizgisi (merkezden çizgiye)
                             const distLineY = rect.y + rect.height * 0.58
-                            ctx.beginPath()
-                            ctx.moveTo(centerX, distLineY)
-                            ctx.lineTo(lineX, distLineY)
-                            const isDanger = controlClient.guidanceMode === "DANGER"
-                            ctx.strokeStyle = isDanger ? "#ef4444" : "#f87171"
-                            ctx.lineWidth = isDanger ? 4 : 2
-                            ctx.stroke()
+                            const isDanger = root.displayGuidanceMode() === "DANGER"
+                            if (hasLine) {
+                                ctx.beginPath()
+                                ctx.moveTo(centerX, distLineY)
+                                ctx.lineTo(lineX, distLineY)
+                                ctx.strokeStyle = isDanger ? "#ef4444" : "#f87171"
+                                ctx.lineWidth = isDanger ? 4 : 2
+                                ctx.stroke()
+                            }
 
                             // Ok ucu
-                            ctx.beginPath()
-                            const arrowDir = lineX < centerX ? 1 : -1
-                            ctx.moveTo(lineX, distLineY)
-                            ctx.lineTo(lineX + arrowDir * 10, distLineY - 6)
-                            ctx.lineTo(lineX + arrowDir * 10, distLineY + 6)
-                            ctx.closePath()
-                            ctx.fillStyle = isDanger ? "#ef4444" : "#f87171"
-                            ctx.fill()
+                            if (hasLine) {
+                                ctx.beginPath()
+                                const arrowDir = lineX < centerX ? 1 : -1
+                                ctx.moveTo(lineX, distLineY)
+                                ctx.lineTo(lineX + arrowDir * 10, distLineY - 6)
+                                ctx.lineTo(lineX + arrowDir * 10, distLineY + 6)
+                                ctx.closePath()
+                                ctx.fillStyle = isDanger ? "#ef4444" : "#f87171"
+                                ctx.fill()
+                            }
 
                             // Telemetri paneli
                             const panelX = rect.x + 6
@@ -583,15 +642,15 @@ ApplicationWindow {
 
                             ctx.font = "bold 9px monospace"
                             ctx.fillStyle = "#22c55e"
-                            ctx.fillText("D:" + controlClient.wallDistance.toFixed(1) + "cm", panelX + 4, panelY + 13)
-                            ctx.fillText("Trn:" + controlClient.turnRatio.toFixed(2), panelX + 78, panelY + 13)
-                            ctx.fillText("L:" + controlClient.leftMotorSpeed.toFixed(0), panelX + 4, panelY + 27)
-                            ctx.fillText("R:" + controlClient.rightMotorSpeed.toFixed(0), panelX + 78, panelY + 27)
-                            ctx.fillText("B:" + controlClient.baseSpeed.toFixed(0), panelX + 4, panelY + 41)
+                            ctx.fillText("D:" + root.displayWallDistance().toFixed(1) + "cm", panelX + 4, panelY + 13)
+                            ctx.fillText("Trn:" + root.displayTurnRatio().toFixed(2), panelX + 78, panelY + 13)
+                            ctx.fillText("L:" + root.displayLeftMotorSpeed().toFixed(0), panelX + 4, panelY + 27)
+                            ctx.fillText("R:" + root.displayRightMotorSpeed().toFixed(0), panelX + 78, panelY + 27)
+                            ctx.fillText("B:" + root.displayBaseSpeed().toFixed(0), panelX + 4, panelY + 41)
 
                             // Mode badge
-                            const mode = controlClient.guidanceMode
-                            const isTracking = mode.startsWith("LINE-")
+                            const mode = root.displayGuidanceMode()
+                            const isTracking = mode.startsWith("LINE-") || mode === "TRACK"
                             ctx.fillStyle = isTracking
                                            ? "#22c55e"
                                            : (mode === "CALIBRATING" ? "#facc15" : "#f87171")
@@ -1048,6 +1107,20 @@ ApplicationWindow {
                         spacing: 8
 
                         ModernButton {
+                            visible: connectionState() === "idle" || connectionState() === "failed"
+                            Layout.preferredWidth: 70
+                            text: "SIM"
+                            icon: "\ue04b"
+                            iconFont: materialIcons.name
+                            baseColor: "#12312a"
+                            hoverColor: "#174236"
+                            pressedColor: "#0f2923"
+                            borderColor: "#2dd4bf"
+                            textColor: "#ccfbf1"
+                            onClicked: root.connectSimulation()
+                        }
+
+                        ModernButton {
                             Layout.fillWidth: true
                             text: root.connectButtonText()
                             icon: root.connectButtonIcon()
@@ -1135,7 +1208,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "AUTO: " + controlClient.guidanceMode
+                    text: (root.simulationMode ? "SIM: " : "AUTO: ") + root.displayGuidanceMode()
                     color: "#64748b"
                     font.pixelSize: 11
                     font.family: "Consolas"

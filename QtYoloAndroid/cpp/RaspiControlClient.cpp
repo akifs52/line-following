@@ -247,7 +247,7 @@ void RaspiControlClient::updateDetections(const QVariantList &boxes)
     // ═══════════════════════════════════════════════════════════════
     if (m_pixelPerCm <= 1e-6) {
         // Varsayılan tahmin: kamera ~38cm genişlik görüyor (27cm yol + kenarlar)
-        constexpr double kCameraViewWidthCm = 20.0;
+        constexpr double kCameraViewWidthCm = 31.0;
         m_pixelPerCm = frameWidth / kCameraViewWidthCm;
         if (m_debugEnabled) {
             qDebug().noquote() << QStringLiteral("[KALIB] Varsayılan px/cm: %1 (frame=%2)")

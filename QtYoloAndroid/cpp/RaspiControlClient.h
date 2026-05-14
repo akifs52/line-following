@@ -171,11 +171,11 @@ private:
     // 5cm'den yakınsa sert kaç, uzaktaysa düz git
     // ═══════════════════════════════════════════════════════════════
     static constexpr double kLaneWidthCm = 27.0;
-    static constexpr double kWallTargetCm = 13.5;  // Hedef mesafe (yol/2)
-    static constexpr double kDangerZoneCm = 5.0;   // Bu mesafenin altında sert dönüş
+    static constexpr double kWallTargetCm = 15;  // Hedef mesafe (yol/2'den biraz fazla)
+    static constexpr double kDangerZoneCm = 11.0;  // Bu mesafenin altında sert dönüş
     static constexpr double kBaseSpeed = 33;
-    static constexpr double kMinPwm = 21.0;
-    static constexpr double kMaxPwm = 100.0;
+    static constexpr double kMinPwm = 23.0;
+    static constexpr double kMaxPwm = 50.0;
     static constexpr double kSteerGain = 0.12;     // Mesafe→dönüş oranı (cm başına)
 
     static constexpr double kRoiTopRatio = 0.35;
