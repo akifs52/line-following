@@ -32,6 +32,10 @@ ApplicationWindow {
     Keys.priority: Keys.BeforeItem
 
     Keys.onPressed: function(event) {
+        if (event.isAutoRepeat) {
+            event.accepted = true
+            return
+        }
         if (!autonomousBusy && joystick) {
             if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
                 event.key === Qt.Key_S || event.key === Qt.Key_D ||
@@ -44,6 +48,10 @@ ApplicationWindow {
     }
 
     Keys.onReleased: function(event) {
+        if (event.isAutoRepeat) {
+            event.accepted = true
+            return
+        }
         if (!autonomousBusy && joystick) {
             if (event.key === Qt.Key_W || event.key === Qt.Key_A ||
                 event.key === Qt.Key_S || event.key === Qt.Key_D ||

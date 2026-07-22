@@ -168,6 +168,10 @@ Item {
     Keys.priority: Keys.BeforeItem
 
     Keys.onPressed: function(event) {
+        if (event.isAutoRepeat) {
+            event.accepted = true
+            return
+        }
         var dx = 0
         var dy = 0
         var keyActive = false
@@ -200,6 +204,10 @@ Item {
     }
 
     Keys.onReleased: function(event) {
+        if (event.isAutoRepeat) {
+            event.accepted = true
+            return
+        }
         if (event.key === Qt.Key_W || event.key === Qt.Key_Up ||
             event.key === Qt.Key_S || event.key === Qt.Key_Down ||
             event.key === Qt.Key_A || event.key === Qt.Key_Left ||

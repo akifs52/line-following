@@ -135,6 +135,12 @@ bool RaspiControlClient::sendJoystick(double x, double y, int speedValue)
 
 bool RaspiControlClient::sendStop()
 {
+    // Buffer'daki bekleyen hareket komutunu temizle,
+    // yoksa timer tetiklenince stop'u ezer
+    m_commandBuffer.clear();
+    if (m_commandBufferTimer.isActive()) {
+        m_commandBufferTimer.stop();
+    }
     return sendRawCommand(QStringLiteral("S"), false);
 }
 
